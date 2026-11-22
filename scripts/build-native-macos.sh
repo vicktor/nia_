@@ -23,6 +23,15 @@ fi
 # Remove UI assets from previous failed builds: some llama.cpp releases try to
 # embed incomplete stale assets even with UI disabled.
 rm -rf "$ENGINE_SRC/tools/ui/dist" "$ROOT/.build/llama-build/tools/ui/dist"
+# CMake caches absolute paths: regenerate when this source tree is moved.
+CMAKE_CACHE="$ROOT/.build/llama-build/CMakeCache.txt"
+if [[ -f "$CMAKE_CACHE" ]]; then
+    CACHED_SOURCE="$(sed -n 's/^CMAKE_HOME_DIRECTORY:INTERNAL=//p' "$CMAKE_CACHE")"
+    if [[ "$CACHED_SOURCE" != "$ENGINE_SRC" ]]; then
+        echo "CMake cache from another directory; regenerating llama-build..."
+        rm -rf "$ROOT/.build/llama-build"
+    fi
+fi
 cmake -S "$ENGINE_SRC" -B "$ROOT/.build/llama-build" \
     -DCMAKE_BUILD_TYPE=Release -DGGML_METAL=ON -DGGML_METAL_EMBED_LIBRARY=ON \
     -DBUILD_SHARED_LIBS=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF \
@@ -65,7 +74,7 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
   <key>CFBundleExecutable</key><string>nia</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleIconFile</key><string>nia_.icns</string>
-  <key>CFBundleShortVersionString</key><string>0.6.0</string>
+  <key>CFBundleShortVersionString</key><string>0.6.4</string>
   <key>CFBundleVersion</key><string>1</string>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>NSHighResolutionCapable</key><true/>

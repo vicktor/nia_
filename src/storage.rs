@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
-use std::{fs::{self, File, OpenOptions}, io::{Read, Write}, path::{Path, PathBuf}};
+use std::{fs::{self, File, OpenOptions}, io::{Read, Write}, path::PathBuf};
 
 #[derive(Debug, Clone)]
 pub struct SessionRecord {
@@ -220,14 +220,6 @@ impl Store {
         self.home.join("logs").join(format!("{key}.bin"))
     }
 
-    pub fn log_size(&self, id: &str) -> Result<Option<u64>> {
-        match std::fs::metadata(self.log_path(id)) {
-            Ok(meta) => Ok(Some(meta.len())),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-            Err(e) => Err(e.into()),
-        }
-    }
-
     pub fn log_file(&self, id: &str) -> Result<File> {
         Ok(OpenOptions::new().create(true).append(true).open(self.log_path(id))?)
     }
@@ -265,13 +257,6 @@ impl Store {
         Ok(())
     }
 
-    pub fn history_count(&self, id: &str) -> Result<u64> {
-        let count: Option<i64> = self.conn.query_row(
-            "SELECT next_line FROM history_counters WHERE session_id=?1", [id], |r| r.get(0)
-        ).optional()?;
-        Ok(count.unwrap_or(0).max(0) as u64)
-    }
-
     /// Count non-empty transcript lines, excluding terminal progress/blank-only rows.
     /// This is an index of readable output, not a pixel-perfect VT replay.
     pub fn history_visible_count(&self, id: &str) -> Result<u64> {
@@ -294,22 +279,6 @@ impl Store {
             |row| row.get::<_,String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
         items.reverse();
         Ok(items)
-    }
-
-    pub fn history_page(&self, id: &str, lines_from_end: u64, count: usize) -> Result<Vec<String>> {
-        // Composite primary key makes deep paging O(log n + page_size).
-        let count = count.clamp(1, 300);
-        let total = self.history_count(id)?;
-        // At the top, always show the oldest non-empty page instead of
-        // allowing `end` to become zero (which produced a blank viewport).
-        let max_offset = total.saturating_sub(count as u64);
-        let offset = lines_from_end.min(max_offset);
-        let end = total.saturating_sub(offset);
-        let start = end.saturating_sub(count as u64);
-        let mut stmt = self.conn.prepare(
-            "SELECT text FROM history_lines WHERE session_id=?1 AND line_no>=?2 AND line_no<?3 ORDER BY line_no ASC")?;
-        let rows = stmt.query_map(params![id, start as i64, end as i64],|r|r.get::<_,String>(0))?;
-        rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
     }
 
     pub fn append_and_sync(file: &mut File, data: &[u8]) -> Result<()> {

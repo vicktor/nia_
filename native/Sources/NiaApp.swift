@@ -307,7 +307,7 @@ private struct WorkspaceLayout: Codable {
         let status = id.withCString {
             nia_resize_fast(handle, $0, UInt16(clamping: r), UInt16(clamping: c))
         }
-        if status != 0 { report(status); return }
+        if status != 0 { _ = report(status); return }
         refreshScreen(for: id)
 
         // Do not replay the ANSI log over a live shell. Resize is immediate,
@@ -780,24 +780,84 @@ private struct SessionDropDelegate: DropDelegate {
     }
 }
 
-/// Keeps the system titlebar native while permitting the Metal content region
-/// to have alpha. The sidebar retains SwiftUI's normal system material.
+/// The window must be non-opaque for the Metal drawable's alpha to reveal
+/// the desktop. That also makes the *window* background transparent, including
+/// the native titlebar. Put a separate solid layer behind the native titlebar
+/// controls; do not extend terminal content into that region.
+private final class NiaTitlebarBackdrop: NSView {
+    override var isOpaque: Bool { true }
+    // The titlebar backdrop must participate in hit testing so the native
+    // titlebar can be dragged. Returning nil made the region inert.
+    override var mouseDownCanMoveWindow: Bool { true }
+    override func mouseDown(with event: NSEvent) {
+        window?.performDrag(with: event)
+    }
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        refreshColor()
+    }
+    func refreshColor() {
+        // NSColor has no resolvedColor(with:) API on macOS. Resolve the
+        // dynamic system color under this view's effective appearance.
+        var background: NSColor = .windowBackgroundColor
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            background = NSColor.windowBackgroundColor.usingColorSpace(.deviceRGB)
+                ?? NSColor.windowBackgroundColor
+        }
+        layer?.backgroundColor = background.cgColor
+    }
+}
+
 private final class NiaTransparencyHost: NSView {
     var requestedOpacity: Double = 1.0 { didSet { configureWindow() } }
+    private weak var hostedWindow: NSWindow?
+    private var backdrop: NiaTitlebarBackdrop?
+
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        if hostedWindow !== window {
+            backdrop?.removeFromSuperview()
+            backdrop = nil
+            hostedWindow = window
+        }
         configureWindow()
     }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        backdrop?.refreshColor()
+    }
+
+    private func installBackdrop(in window: NSWindow) {
+        guard let content = window.contentView, let frameView = content.superview else { return }
+        if backdrop?.superview !== frameView {
+            backdrop?.removeFromSuperview()
+            let newBackdrop = NiaTitlebarBackdrop(frame: .zero)
+            newBackdrop.wantsLayer = true
+            newBackdrop.refreshColor()
+            // Behind the ordinary titlebar controls and below the content view.
+            frameView.addSubview(newBackdrop, positioned: .below, relativeTo: content)
+            backdrop = newBackdrop
+        }
+        guard let backdrop else { return }
+        let totalHeight = frameView.bounds.height
+        let titleHeight = max(0, min(totalHeight,
+            window.frame.height - window.contentLayoutRect.height))
+        let y = frameView.isFlipped ? 0 : totalHeight - titleHeight
+        backdrop.frame = NSRect(x: 0, y: y, width: frameView.bounds.width, height: titleHeight)
+        backdrop.autoresizingMask = frameView.isFlipped ? [.width, .maxYMargin] : [.width, .minYMargin]
+        backdrop.refreshColor()
+    }
+
     private func configureWindow() {
         guard let window else { return }
-        // macOS requires a non-opaque window for Metal alpha to reveal windows
-        // behind it. Keep the titlebar in standard system mode; do not extend
-        // content into its region. A truly independent opaque titlebar needs
-        // dedicated AppKit hosting and is tracked as follow-up work.
-        let transparencyEnabled = requestedOpacity < 0.999
+        let transparent = requestedOpacity < 0.999
         window.titlebarAppearsTransparent = false
-        window.isOpaque = !transparencyEnabled
-        window.backgroundColor = transparencyEnabled ? .clear : .windowBackgroundColor
+        window.styleMask.remove(.fullSizeContentView)
+        window.isOpaque = !transparent
+        window.backgroundColor = transparent ? .clear : .windowBackgroundColor
+        installBackdrop(in: window)
+        backdrop?.isHidden = !transparent
     }
 }
 private struct NiaWindowTransparency: NSViewRepresentable {

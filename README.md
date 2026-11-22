@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/nia-icon.png" alt="nia_ icon" width="144" />
+</p>
+
 # nia_
 
 **Your terminal. Your memory. Everywhere.**
@@ -124,3 +128,19 @@ This is an experimental prototype under active development. Known limitations in
 **MPL-2.0** — use for personal projects or commercial products, fork, modify and redistribute. Modified MPL-covered files must remain available under MPL-2.0 **when you distribute them**. It does *not* compel publication of private-only changes or require a public GitHub PR. See [LICENSE](LICENSE), [LICENSE-NOTICE.md](LICENSE-NOTICE.md), and [CONTRIBUTING.md](CONTRIBUTING.md). Third-party components and downloaded model weights have independent terms; see [THIRD_PARTY.md](THIRD_PARTY.md).
 
 Repository: **https://github.com/vicktor/nia_**
+
+## Publishing a GitHub release
+
+Install and authenticate the GitHub CLI (`brew install gh && gh auth login`),
+commit your changes and push the branch, then run on a Mac:
+
+```bash
+./scripts/release.sh 0.6.1 --prerelease
+```
+
+The release script requires a clean, pushed Git worktree and a matching
+`Cargo.toml` and bundle version. It builds `dist/nia_.app`, verifies its
+code signature and architecture, creates a macOS ZIP using `ditto`, writes a
+SHA-256 checksum, tags the commit, and publishes both assets to
+`github.com/vicktor/nia_`. Use `--stable` or `--draft` instead if needed.
+The development build is ad-hoc signed, **not notarized** by Apple.

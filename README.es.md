@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/nia-icon.png" alt="nia_ icon" width="144" />
+</p>
+
 # nia_
 
 **Tu terminal. Tu memoria. En todas partes.**
@@ -125,3 +129,19 @@ nia_ es un prototipo en desarrollo. Sigue pendiente un reflow completo para toda
 **MPL-2.0**. Permite uso privado, gratuito y comercial, modificación y redistribución. Al distribuir modificaciones de archivos cubiertos por MPL, debes facilitar su código fuente a los destinatarios bajo la misma licencia. **No obliga a publicar cambios privados ni a abrir un PR público.** Consulta [LICENSE](LICENSE), [LICENSE-NOTICE.md](LICENSE-NOTICE.md) y [CONTRIBUTING.md](CONTRIBUTING.md). Las dependencias y los modelos descargados mantienen sus licencias propias: [THIRD_PARTY.md](THIRD_PARTY.md).
 
 Repositorio: **https://github.com/vicktor/nia_**
+
+## Publicar una release en GitHub
+
+Instala y autentica GitHub CLI (`brew install gh && gh auth login`),
+guarda tus cambios en un commit y súbelos al repositorio. Después, desde macOS:
+
+```bash
+./scripts/release.sh 0.6.1 --prerelease
+```
+
+El script exige un árbol Git limpio, un commit ya publicado y la versión
+correcta en `Cargo.toml` y en el bundle. Compila `dist/nia_.app`, comprueba
+la firma y la arquitectura, crea un ZIP con `ditto`, calcula SHA-256, crea
+la etiqueta y publica el ZIP y la suma de comprobación en
+`github.com/vicktor/nia_`. También acepta `--stable` y `--draft`.
+La firma actual es de desarrollo (*ad hoc*): **no hay notarización de Apple**.

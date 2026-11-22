@@ -18,3 +18,7 @@ Runtime / functionality claims should be treated as proposed until tested on mac
 - Enable wgpu Metal backend on macOS when eframe default features are disabled.
 - Remove unused Linux X11 and Wayland features from the macOS build.
 - No compilation or runtime verification was possible in this environment.
+
+## v0.6.1
+- Experimental independent opaque titlebar backing for transparent Metal terminal.
+- GitHub release script with tag/version/signature checks.
