@@ -1,0 +1,19 @@
+# Build and signing artifacts
+/target/
+/.build/
+/dist/
+*.dSYM/
+.DS_Store
+.swiftpm/
+# Local secrets or private workspace data
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*restic-password*
+*.gguf
+*.gguf.part
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm

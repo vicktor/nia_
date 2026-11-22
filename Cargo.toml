@@ -1,0 +1,30 @@
+[package]
+name = "nia"
+version = "0.6.0"
+edition = "2021"
+autobins = false
+
+license = "MPL-2.0"
+description = "nia_, a native macOS terminal with Rust-backed persistent sessions and Metal rendering"
+
+[dependencies]
+anyhow = "1"
+portable-pty = "0.9"
+vt100 = "0.18"
+rusqlite = { version = "0.43", features = ["bundled"] }
+dirs = "7"
+serde = { version = "1", features = ["derive"] }
+toml = "1.2"
+zip = { version = "9.8", default-features = false, features = ["deflate"] }
+tempfile = "3"
+serde_json = "1"
+walkdir = "2"
+
+[[bin]]
+name = "nia-backup"
+path = "src/bin/nia-backup.rs"
+
+[lib]
+name = "nia_core"
+crate-type = ["cdylib"]
+

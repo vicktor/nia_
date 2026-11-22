@@ -1,0 +1,36 @@
+// SPDX-License-Identifier: MPL-2.0
+#ifndef NIA_BRIDGE_H
+#define NIA_BRIDGE_H
+#include <stdint.h>
+#include <stddef.h>
+#ifdef __cplusplus
+extern "C" {
+#endif
+void *nia_core_new(void);
+void nia_core_free(void *core);
+void nia_string_free(char *text);
+char *nia_last_error(void *core);
+char *nia_sessions(void *core);
+char *nia_take_ai_queries(void *core);
+char *nia_workspace_layout(void *core);
+int32_t nia_save_workspace_layout(void *core, const char *layout);
+int32_t nia_move_session(void *core, const char *source, const char *target);
+int32_t nia_move_session_relative(void *core, const char *source, const char *target, int32_t after);
+int32_t nia_create_session(void *core, const char *name);
+int32_t nia_create_remote_session(void *core, const char *name, const char *ssh_host);
+int32_t nia_reconnect_remote_session(void *core, const char *name);
+int32_t nia_open_session(void *core, const char *name);
+int32_t nia_archive_session(void *core, const char *name);
+int32_t nia_send(void *core, const char *name, const uint8_t *data, size_t len);
+int32_t nia_resize(void *core, const char *name, uint16_t rows, uint16_t cols);
+int32_t nia_resize_fast(void *core, const char *name, uint16_t rows, uint16_t cols);
+int32_t nia_reflow(void *core, const char *name);
+int32_t nia_set_session_color(void *core, const char *name, const char *color);
+int32_t nia_set_scrollback_limit(void *core, uint32_t lines);
+int32_t nia_scroll(void *core, const char *name, int32_t delta);
+void nia_poll(void *core);
+char *nia_screen(void *core, const char *name);
+#ifdef __cplusplus
+}
+#endif
+#endif
