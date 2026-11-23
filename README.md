@@ -52,10 +52,53 @@ In a local Zsh session, nia_ records **completed commands** together with their 
 
 - Uses built-in Zsh `preexec`/`precmd` hooks and an indexed SQLite table. No daemon, model, or periodic terminal text parsing.
 - The timeline loads at most the latest **200 commands** when opened; the data remains available in SQLite and encrypted backups after restart.
-- Initial implementation tracks **local Zsh only**. This is a searchable command log, not yet in-terminal scrollback anchors or time travel.
+- Command recording currently tracks **local Zsh only**. **View output** navigates the indexed transcript when a command has a navigation marker.
 - Commands may contain credentials. Treat the database and backups as sensitive.
 
+## Session rename and workspace recovery
+
+- Double-click a session name in the sidebar to edit its display title in place. **Return** saves; **Escape** cancels. Right-click → **Rename session** is also available.
+- Titles are aliases stored separately in SQLite. Renaming never changes the session's stable ID, PTY, command history, scrollback, remote tmux name, or saved window layout.
+- If macOS starts with a fresh scene identifier, the first window now recovers all previously open sessions rather than appearing empty. Every recovered tab gets its shell restored, not just the currently visible split panes.
+- Explicitly launched conversations using `claude --resume <id>`, `codex resume <id>`, or `gemini --resume <id>` are remembered while running and re-invoked on shell recovery. Only validated exact resume commands are eligible; arbitrary commands are never replayed.
+- Agent session recovery requires the relevant CLI and its own conversation data on this Mac. Existing conversations launched **before** this feature cannot be identified retroactively.
+
+## Command-output navigation (v0.7.4)
+
+Local Zsh now emits an invisible **OSC 133** marker at command start. The streaming history indexer records its exact indexed line in SQLite, independently from the visible PTY. Open the Command Timeline (⌘⇧H) and choose **View output** to jump to the matching transcript page without running the command again. The existing **Copy** and **Insert** actions are unchanged.
+
+- No new daemons or renderer scanning; markers are parsed as ANSI bytes arrive.
+- Historical commands recorded before this version have no anchor; **View output** is disabled until a command runs with the updated hooks.
+- Navigation uses nia_'s text-indexed historical scrollback; interactive fullscreen TUI rendering cannot be reconstructed pixel-for-pixel from text alone.
+- In-memory PTYs, shell state, agent resume and titlebar are unaffected.
+
+## Terminal startup, shell environment and history (v0.7.5)
+
+The initial 30-row × 100-column PTY grid is a temporary fallback. Each visible session now receives its actual pane dimensions, including when SwiftUI reuses the same view for another tab without changing the window size. A size is remembered only after the backend accepts it. The view also checks the reported terminal grid, so reconnecting a PTY under the same session ID cannot keep an obsolete size.
+
+- Pane and terminal fill the available width and height. Geometry is measured after layout, ignoring unattached or zero-sized views; font and display-scale changes revalidate the grid.
+- Local Zsh, Bash and Fish start as interactive login shells. Zsh forwards the user's `.zshenv`, `.zprofile`, `.zshrc` and `.zlogin` with their intended `ZDOTDIR`, then installs nia_'s session history, hooks and virtualenv restoration.
+- The build script keeps `cargo` already selected in `PATH`. If it is missing there, it checks the existing `${CARGO_HOME:-$HOME/.cargo}/bin` installation. Its error distinguishes a missing path from a missing Rust installation.
+- Existing shells keep the environment with which they started. Test the new environment in a fresh session after launching the updated app. Build this first update in a terminal whose toolchain already works.
+
+The **View output** path also preserves CRLF text, repairs older derived indexes from retained raw logs when first needed, and keeps an absolute command position through new output and resizing. Recent commands stay in history mode even when their output fits in one screen.
+
+See [CHANGELOG-v0.7.5.md](CHANGELOG-v0.7.5.md) for automated checks, navigation limits and the macOS validation procedure.
+
+## Responsive typing and rendering (v0.7.6)
+
+The native app now uses one shared output clock at a target interval of 1/60 second, replacing the per-window 120 ms polls. Session metadata updates separately every 500 ms. Visible panes request a compact binary snapshot only when their terminal revision changes; unchanged session lists are not republished to SwiftUI.
+
+An ordered input writer also keeps large pastes and a busy PTY off the UI thread. Its bounded queue accepts each event completely or reports that it cannot be sent yet.
+
+Raw output and its text index are persisted by an ordered background worker. The live parser no longer waits for a file sync before showing echoed input. Queues are bounded and apply backpressure without dropping output. History navigation waits for pending writes, and normal application termination flushes accepted output. Output may be visible before it reaches durable storage: a forced termination or power loss can lose the still-pending tail.
+
+The cursor follows the parser's actual row, including empty rows, and its blink restarts on input or movement. New glyphs use an immutable Metal texture snapshot so the CPU does not overwrite a texture used by an earlier frame.
+
+See [CHANGELOG-v0.7.6.md](CHANGELOG-v0.7.6.md) for validation and the remaining macOS visual checks. The refresh interval is a scheduling target, not a measured end-to-end latency guarantee.
+
 ## Highlights
+
 
 | Area | Current capabilities | Important limits |
 | --- | --- | --- |

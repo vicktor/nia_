@@ -52,8 +52,50 @@ En las sesiones Zsh locales, nia_ registra los **comandos completados** con fech
 
 - Aprovecha hooks internos `preexec`/`precmd` de Zsh y una tabla SQLite indexada. No hay demonios, modelos ni análisis periódico del texto del terminal.
 - Al abrir la vista se consultan los **200 comandos más recientes**; los datos permanecen en SQLite y los backups cifrados tras reiniciar.
-- Inicialmente disponible para **Zsh local**. Es un historial consultable, todavía no marcas navegables dentro del scrollback ni reproducción temporal.
+- El registro de comandos está disponible por ahora para **Zsh local**. **Ver salida** navega por el texto indexado cuando el comando tiene una marca de navegación.
 - Los comandos pueden contener credenciales. Protege la base de datos y las copias.
+
+## Renombrar sesiones y recuperar espacios de trabajo
+
+- Doble clic sobre el nombre de una sesión en la barra lateral para editarlo. **Intro** guarda; **Escape** cancela. También disponible desde clic derecho → **Renombrar sesión**.
+- Los nombres son etiquetas independientes del ID estable guardadas en SQLite. Cambiar el nombre no altera la PTY, los comandos, el scrollback, el tmux remoto ni la distribución guardada.
+- Si macOS abre nia_ con un identificador de ventana nuevo, la primera ventana vuelve a recuperar todas las sesiones abiertas anteriormente. Se restauran las shells de todas las pestañas, no solo las visibles.
+- Si ejecutas `claude --resume <id>`, `codex resume <id>` o `gemini --resume <id>`, nia_ recuerda ese identificador mientras está activo y reutiliza el comando al recuperar la shell. Solo permite órdenes exactas y validadas; no ejecuta automáticamente comandos arbitrarios.
+- Para recuperar el agente deben estar instalados su CLI y los datos originales de su conversación. No se pueden identificar retroactivamente las conversaciones iniciadas **antes** de esta funcionalidad.
+
+## Navegación al resultado de comandos (v0.7.4)
+
+Zsh local emite una marca invisible **OSC 133** al iniciar cada comando. El indexador de historial registra en SQLite la línea real correspondiente. Abre el Historial de comandos (⌘⇧H) y pulsa **Ver salida** para saltar a la página del historial sin volver a ejecutar el comando. **Copiar** e **Insertar** siguen igual.
+
+- Sin demonios adicionales ni análisis continuo del renderizado: las marcas se procesan al recibir los bytes ANSI.
+- Los comandos anteriores a esta versión no tienen marca; **Ver salida** solo se habilita al ejecutar comandos con los hooks actualizados.
+- La navegación usa el scrollback textual indexado: una TUI a pantalla completa no puede reconstruirse píxel a píxel desde texto plano.
+- La PTY, Zsh, recuperación de agentes y barra superior no cambian.
+
+## Inicio del terminal, entorno de shell e historial (v0.7.5)
+
+La rejilla inicial de la PTY, de 30 filas × 100 columnas, es provisional. Cada sesión visible recibe ahora las dimensiones reales de su panel, incluso cuando SwiftUI reutiliza la misma vista para otra pestaña sin cambiar el tamaño de la ventana. Solo se recuerda una medida después de que el motor la acepte. La vista también comprueba la rejilla que devuelve el terminal, por lo que una PTY reconectada con el mismo ID no puede conservar un tamaño obsoleto.
+
+- El panel y el terminal ocupan todo el ancho y alto disponible. Se mide después del layout, ignorando vistas sin ventana o de tamaño cero; cambiar la fuente o la escala de pantalla vuelve a validar la rejilla.
+- Zsh, Bash y Fish locales arrancan como shells de inicio de sesión interactivas. Zsh carga `.zshenv`, `.zprofile`, `.zshrc` y `.zlogin` con el `ZDOTDIR` que corresponda al usuario, y después instala el historial, los hooks y la restauración del virtualenv de nia_.
+- El script de compilación respeta el `cargo` elegido en `PATH`. Si no lo encuentra, comprueba la instalación existente en `${CARGO_HOME:-$HOME/.cargo}/bin`. El mensaje distingue entre una ruta ausente y una instalación de Rust ausente.
+- Las shells ya abiertas conservan el entorno con el que arrancaron. Prueba el nuevo entorno en una sesión nueva después de abrir la app actualizada. Compila esta primera actualización desde un terminal en el que ya funcione la herramienta de compilación.
+
+La ruta de **Ver salida** también conserva el texto CRLF, repara los índices derivados antiguos desde los registros originales cuando se necesitan y mantiene una posición absoluta del comando aunque llegue más salida o cambie el tamaño. Los comandos recientes permanecen en la vista de historial aunque su salida quepa en una pantalla.
+
+Consulta [CHANGELOG-v0.7.5.md](CHANGELOG-v0.7.5.md) para las pruebas automáticas, los límites de navegación y la comprobación en macOS.
+
+## Escritura y renderizado fluidos (v0.7.6)
+
+La aplicación nativa utiliza ahora un único reloj de salida con un intervalo objetivo de 1/60 de segundo, en lugar del sondeo de 120 ms por ventana. Los metadatos de sesiones se actualizan por separado cada 500 ms. Los paneles visibles solicitan una captura binaria compacta solo cuando cambia la revisión de su terminal; las listas de sesiones sin cambios no se vuelven a publicar en SwiftUI.
+
+La entrada se escribe en orden fuera del hilo de interfaz, también durante pegados grandes o cuando la PTY está ocupada. Su cola acotada acepta cada evento completo o informa de que todavía no se puede enviar.
+
+Un trabajador en segundo plano guarda la salida original y su índice de texto en orden. El parser de la pantalla ya no espera a sincronizar un archivo en disco para mostrar el eco del teclado. Las colas tienen un límite y frenan la lectura si se llenan, sin descartar salida. La navegación del historial espera a las escrituras pendientes y el cierre normal de la aplicación vacía la cola. La salida puede verse antes de quedar guardada de forma duradera: un cierre forzado o un corte de corriente puede perder el tramo todavía pendiente.
+
+El cursor sigue la fila real del parser, incluidas las filas vacías, y reinicia el parpadeo al escribir o moverse. Los glifos nuevos utilizan una captura inmutable de la textura Metal para que la CPU no sobrescriba una textura que sigue usando un frame anterior.
+
+Consulta [CHANGELOG-v0.7.6.md](CHANGELOG-v0.7.6.md) para las pruebas y las comprobaciones visuales pendientes en macOS. El intervalo de actualización es un objetivo de planificación, no una garantía medida de latencia de extremo a extremo.
 
 ## Características
 

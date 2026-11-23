@@ -1,14 +1,17 @@
 // SPDX-License-Identifier: MPL-2.0
 use anyhow::{Context, Result};
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
-use std::{fs::{self, File}, io::{Read, Seek, SeekFrom, Write}, num::NonZeroU16, path::{Path, PathBuf}, sync::mpsc::{self, Receiver}, thread};
-use crate::{storage::SessionRecord, history::HistoryIndexer};
+use std::{fs::{self, File}, io::{Read, Seek, SeekFrom}, num::NonZeroU16, path::{Path, PathBuf}, sync::mpsc::{self, Receiver}, thread};
+#[cfg(test)]
+use std::io::Write;
+use crate::{storage::SessionRecord, history::HistoryIndexer, pty_input::PtyInput};
 
 pub struct LiveTerminal {
     pub parser: vt100::Parser,
-    pub input: Box<dyn Write + Send>,
+    pub input: PtyInput,
     pub master: Box<dyn MasterPty + Send>,
     pub rx: Receiver<Vec<u8>>,
+    pub remote: bool,
     pub history_indexer: HistoryIndexer,
     state_path: PathBuf,
     ai_request_path: Option<PathBuf>,
@@ -19,6 +22,7 @@ pub struct LiveTerminal {
     marks_offset: u64,
     marks_buffer: Vec<u8>,
     pending_mark: Option<(f64, String, String)>,
+    agent_resume_path: Option<PathBuf>,
     pub _child: Box<dyn portable_pty::Child + Send + Sync>,
 }
 
@@ -42,8 +46,23 @@ impl LiveTerminal {
             c.arg(format!("PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH exec tmux new-session -A -s {}", remote_tmux_name(&record.id)));
             c
         } else {
-            CommandBuilder::new(shell.as_str())
+            let mut c = CommandBuilder::new(shell.as_str());
+            // GUI apps do not inherit a terminal's login environment. Let the
+            // user's shell load its profiles (Rust, Homebrew, language tools).
+            for arg in local_shell_args(&shell) {
+                c.arg(*arg);
+            }
+            c
         };
+        // Advertise ANSI 256-color and truecolor support to local programs.
+        // Without an explicit TERM, a GUI-launched app may inherit "dumb"
+        // or an unrelated terminal definition; interactive TUIs then disable
+        // their color output before it ever reaches the Metal renderer.
+        // The remote SSH path keeps its own terminal negotiation.
+        if remote_host.is_none() {
+            command.env("TERM", "xterm-256color");
+            command.env("COLORTERM", "truecolor");
+        }
         // Zsh reads its history at shell startup. Install a per-session startup
         // directory that sources the user's configuration, then overrides HISTFILE.
         if remote_host.is_some() {
@@ -70,9 +89,13 @@ impl LiveTerminal {
             }
         }
         let child = pair.slave.spawn_command(command)?;
-        let mut reader = pair.master.try_clone_reader()?;
+        let reader = pair.master.try_clone_reader()?;
         let writer = pair.master.take_writer()?;
-        let (tx, rx) = mpsc::channel();
+        let input = PtyInput::for_pty(pair.master.as_ref(), writer)?;
+        let mut reader = input.reader(reader);
+        // A slow disk or a temporarily busy UI must apply backpressure instead
+        // of retaining an unbounded terminal transcript in memory.
+        let (tx, rx) = mpsc::sync_channel(64);
         thread::Builder::new().name(format!("pty-{}",record.id)).spawn(move || {
             let mut buf = [0u8; 8192];
             loop {
@@ -101,10 +124,21 @@ impl LiveTerminal {
             }
             Some(file)
         } else { None };
-        Ok(Self { state_path, ai_request_path, exit_request_path, exit_approval_path, exit_observed_polls: 0,
-            marks_file, marks_offset: 0, marks_buffer: Vec::new(), pending_mark: None,
+        let agent_resume_path = if ai_request_path.is_some() {
+            Some(session_base(&record.id)?.join("agent-resume"))
+        } else { None };
+        let saved_agent = agent_resume_path.as_ref().and_then(|path|
+            fs::read_to_string(path).ok()).and_then(|line| validated_agent_resume(line.trim()));
+        let mut terminal = Self { state_path, ai_request_path, exit_request_path, exit_approval_path, exit_observed_polls: 0,
+            marks_file, marks_offset: 0, marks_buffer: Vec::new(), pending_mark: None, agent_resume_path,
             history_indexer: HistoryIndexer::default(), parser: vt100::Parser::new(NonZeroU16::new(rows).unwrap(), NonZeroU16::new(cols).unwrap(), scrollback_lines),
-            input: writer, master: pair.master, rx, _child: child })
+            input, master: pair.master, rx, remote: remote_host.is_some(), _child: child };
+        // Only a previously observed explicit resume command is replayed.
+        // Never replay arbitrary shell history or unvalidated input.
+        if let Some(command) = saved_agent {
+            terminal.send(format!("{command}\r").as_bytes())?;
+        }
+        Ok(terminal)
     }
 
     /// Read only new appended metadata, capped to 64 KiB per poll. Hooks use
@@ -148,10 +182,29 @@ impl LiveTerminal {
             if kind == b'S' {
                 if let Ok(started) = fields[0].parse::<f64>() {
                     if started.is_finite() && fields[1].len() <= 4096 && fields[2].len() <= 8192 {
+                        // Remember the explicit resume command while the CLI is
+                        // still running, not only once it returns to the prompt.
+                        if let Some(path) = &self.agent_resume_path {
+                            if let Some(command) = validated_agent_resume(&fields[2]) {
+                                let temp = path.with_extension("tmp");
+                                fs::write(&temp, command)?;
+                                #[cfg(unix)] {
+                                    use std::os::unix::fs::PermissionsExt;
+                                    fs::set_permissions(&temp, fs::Permissions::from_mode(0o600))?;
+                                }
+                                fs::rename(temp, path)?;
+                            } else {
+                                let _ = fs::remove_file(path);
+                            }
+                        }
                         self.pending_mark = Some((started, fields[1].clone(), fields[2].clone()));
                     }
                 }
             } else if let Some((start, cwd, command)) = self.pending_mark.take() {
+                // Once the agent has exited, restarting it would be wrong.
+                if let Some(path) = &self.agent_resume_path {
+                    let _ = fs::remove_file(path);
+                }
                 if let (Ok(end), Ok(status)) = (fields[0].parse::<f64>(), fields[1].parse::<i64>()) {
                     if end.is_finite() && end >= start && end - start < 86400.0 * 7.0 {
                         let duration_ms = ((end - start) * 1000.0).round() as i64;
@@ -226,7 +279,8 @@ impl LiveTerminal {
         Ok(Some((cwd.to_owned(), venv)))
     }
 
-    pub fn send(&mut self, bytes: &[u8]) -> Result<()> { self.input.write_all(bytes)?; self.input.flush()?; Ok(()) }
+    pub fn send(&mut self, bytes: &[u8]) -> Result<()> { self.input.send(bytes) }
+    pub fn input_error(&self) -> Option<String> { self.input.error() }
     pub fn resize(&mut self, rows: u16, cols: u16) -> Result<()> {
         let rows = rows.max(1);
         let cols = cols.max(1);
@@ -234,6 +288,77 @@ impl LiveTerminal {
         self.parser.set_size(NonZeroU16::new(rows).unwrap(), NonZeroU16::new(cols).unwrap());
         Ok(())
     }
+
+    #[cfg(test)]
+    pub(crate) fn request_paths_for_tests(&mut self, ai: PathBuf, exit: PathBuf) {
+        self.ai_request_path = Some(ai);
+        self.exit_request_path = Some(exit);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn for_history_tests(rows: u16, cols: u16) -> Result<Self> {
+        let pair = native_pty_system().openpty(PtySize {
+            rows,
+            cols,
+            pixel_width: 0,
+            pixel_height: 0,
+        })?;
+        let child = pair.slave.spawn_command(CommandBuilder::new("/bin/cat"))?;
+        let input = PtyInput::for_pty(pair.master.as_ref(), pair.master.take_writer()?)?;
+        let (_tx, rx) = mpsc::channel();
+        Ok(Self {
+            parser: vt100::Parser::new(
+                NonZeroU16::new(rows).unwrap(),
+                NonZeroU16::new(cols).unwrap(),
+                100,
+            ),
+            input,
+            master: pair.master,
+            rx,
+            remote: false,
+            history_indexer: HistoryIndexer::default(),
+            state_path: PathBuf::new(),
+            ai_request_path: None,
+            exit_request_path: None,
+            exit_approval_path: None,
+            exit_observed_polls: 0,
+            marks_file: None,
+            marks_offset: 0,
+            marks_buffer: Vec::new(),
+            pending_mark: None,
+            agent_resume_path: None,
+            _child: child,
+        })
+    }
+}
+
+impl Drop for LiveTerminal {
+    fn drop(&mut self) {
+        self.input.cancel();
+        // Input/output workers observe cancellation within their bounded poll
+        // wait. Terminate only the local shell/SSH child as this session closes.
+        // Remote tmux is independent of that SSH client and remains running.
+        if !matches!(self._child.try_wait(), Ok(Some(_))) {
+            let _ = self._child.kill();
+        }
+    }
+}
+
+/// Fail-closed recognition of commands the user explicitly ran to resume
+/// a known agent conversation. An arbitrary command is NEVER re-executed.
+fn validated_agent_resume(source: &str) -> Option<String> {
+    let parts: Vec<&str> = source.split_ascii_whitespace().collect();
+    let (provider, id) = match parts.as_slice() {
+        ["claude", "--resume", id] => ("claude --resume", *id),
+        ["codex", "resume", id] => ("codex resume", *id),
+        ["gemini", "--resume", id] => ("gemini --resume", *id),
+        _ => return None,
+    };
+    if !(8..=128).contains(&id.len()) ||
+        !id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_') {
+        return None;
+    }
+    Some(format!("{provider} {id}"))
 }
 
 // Stable and filesystem-safe per-session directory. Session IDs can contain unicode.
@@ -263,21 +388,95 @@ fn zsh_quote(path: &Path) -> String {
     format!("'{}'", path.to_string_lossy().replace('\'', "'\\''"))
 }
 
+fn local_shell_args(shell: &str) -> &'static [&'static str] {
+    match Path::new(shell).file_name().and_then(|name| name.to_str()) {
+        Some("zsh" | "bash" | "fish") => &["-l", "-i"],
+        // Preserve compatibility with custom shells whose flags are unknown.
+        _ => &[],
+    }
+}
+
 fn prepare_zsh_history(id: &str) -> Result<PathBuf> {
     let base = session_base(id)?;
-    let original = std::env::var_os("ZDOTDIR").map(PathBuf::from)
-        .or_else(dirs::home_dir).context("cannot find zsh startup directory")?;
-    for name in [".zshenv", ".zprofile", ".zlogin"] {
-        let source = original.join(name);
-        if source.exists() && source != base.join(name) {
-            fs::write(base.join(name), format!("[[ -f {0} ]] && source {0}\n", zsh_quote(&source)))?;
+    let original = std::env::var_os("ZDOTDIR").map(PathBuf::from);
+    write_zsh_startup(&base, original.as_deref())?;
+    Ok(base)
+}
+
+/// Forward each Zsh startup phase with the user's ZDOTDIR, not the integration
+/// directory. A .zshenv/.zprofile can legitimately redirect later startup files.
+/// After startup restore the user's value so child shells cannot recursively
+/// source Nia's wrappers. Write every wrapper even when a user file is absent:
+/// a removed profile must not leave a stale absolute source path behind.
+fn write_zsh_startup(base: &Path, original: Option<&Path>) -> Result<()> {
+    const BANNER: &str = "# Generated by Nia;";
+    // Older versions exported the wrapper directory into every child process.
+    // A Nia launched from such a shell should restart at the user's .zshenv.
+    let original = original.filter(|path| {
+        *path != base
+            && !fs::read_to_string(path.join(".zshrc"))
+                .map(|text| text.starts_with(BANNER))
+                .unwrap_or(false)
+    });
+    let initial = match original {
+        Some(path) => format!(
+            "typeset -g _nia_user_zdotdir={}\ntypeset -gi _nia_user_zdotdir_set=1\n",
+            zsh_quote(path)
+        ),
+        None => "typeset -g _nia_user_zdotdir=''\ntypeset -gi _nia_user_zdotdir_set=0\n".to_owned(),
+    };
+    let restore = "if (( _nia_user_zdotdir_set )); then\n  export ZDOTDIR=\"$_nia_user_zdotdir\"\nelse\n  unset ZDOTDIR\nfi\n";
+    let remember = "_nia_user_zdotdir=${ZDOTDIR-}\n_nia_user_zdotdir_set=${+ZDOTDIR}\n";
+    let keep_wrapper = format!("export ZDOTDIR={}\n", zsh_quote(base));
+    let integration = format!(
+        "builtin source {}\n",
+        zsh_quote(&base.join("nia-integration.zsh"))
+    );
+    let cleanup = "unset _nia_user_zdotdir _nia_user_zdotdir_set\n";
+    for name in [".zshenv", ".zprofile", ".zshrc", ".zlogin"] {
+        let mut content = format!("{BANNER} forward the user's {name}.\n");
+        if name == ".zshenv" {
+            content.push_str(&initial);
         }
+        content.push_str(restore);
+        content.push_str(&format!("if [[ -f \"${{ZDOTDIR-$HOME}}/{name}\" ]]; then\n  builtin source \"${{ZDOTDIR-$HOME}}/{name}\"\nfi\n"));
+        content.push_str(remember);
+        match name {
+            ".zshenv" => {
+                content.push_str("if [[ -o rcs && ( -o login || -o interactive ) ]]; then\n");
+                content.push_str(&keep_wrapper);
+                content.push_str("else\n");
+                content.push_str(cleanup);
+                content.push_str("fi\n");
+            }
+            ".zprofile" => {
+                content.push_str("if [[ -o rcs ]]; then\n");
+                content.push_str(&keep_wrapper);
+                content.push_str("else\n");
+                content.push_str(cleanup);
+                content.push_str("fi\n");
+            }
+            ".zshrc" => {
+                content.push_str("if [[ -o rcs && -o login ]]; then\n");
+                content.push_str(&keep_wrapper);
+                content.push_str("else\n");
+                content.push_str(&integration);
+                content.push_str(cleanup);
+                content.push_str("fi\n");
+            }
+            _ => {
+                content.push_str("if [[ -o interactive ]]; then\n");
+                content.push_str(&integration);
+                content.push_str("fi\n");
+                content.push_str(cleanup);
+            }
+        }
+        fs::write(base.join(name), content)?;
     }
     // A query left by a previous crashed process is not a new request.
     let _ = fs::remove_file(base.join("ai-request"));
     let _ = fs::remove_file(base.join("exit-request"));
     let _ = fs::remove_file(base.join("exit-approved"));
-    let original_rc = original.join(".zshrc");
     let history = base.join("shell_history");
     // Create an owner-only history file, also protecting existing installations.
     let _file = fs::OpenOptions::new().create(true).append(true).open(&history)?;
@@ -286,8 +485,7 @@ fn prepare_zsh_history(id: &str) -> Result<PathBuf> {
         fs::set_permissions(&history, fs::Permissions::from_mode(0o600))?;
     }
     let content = format!("# Generated by Nia; preserve user's normal Zsh setup.\n\
-        [[ -f {0} ]] && source {0}\n\
-        HISTFILE={1}\n\
+        HISTFILE={0}\n\
         HISTSIZE=20000\n\
         SAVEHIST=20000\n\
         unsetopt SHARE_HISTORY\n\
@@ -300,19 +498,21 @@ fn prepare_zsh_history(id: &str) -> Result<PathBuf> {
         fi\n\
         # Save current directory and virtualenv after every interactive command.\n\
         function _ember_capture_state() {{\n\
-          local tmp={2}.tmp.$$\n\
+          local tmp={1}.tmp.$$\n\
           ( umask 077; print -r -- \"$PWD\" > \"$tmp\"; print -r -- \"${{VIRTUAL_ENV:-}}\" >> \"$tmp\" )\n\
-          command mv -f -- \"$tmp\" {2}\n\
+          command mv -f -- \"$tmp\" {1}\n\
         }}\n\
         autoload -Uz add-zsh-hook\n\
         # Command timeline: built-in Zsh hooks, no subprocess or prompt edits.\n\
         zmodload zsh/datetime 2>/dev/null\n\
         function _nia_mark_start() {{\n\
-          builtin printf 'S\\0%s\\0%s\\0%s\\0' \"$EPOCHREALTIME\" \"$PWD\" \"$1\" >> {6}\n\
+          local started=$EPOCHREALTIME\n\
+          builtin printf 'S\\0%s\\0%s\\0%s\\0' \"$started\" \"$PWD\" \"$1\" >> {5}\n\
+          builtin printf '\\033]133;C;%s\\007' \"$started\"\n\
         }}\n\
         function _nia_mark_end() {{\n\
           local exit_status=$?\n\
-          builtin printf 'E\\0%s\\0%s\\0' \"$EPOCHREALTIME\" \"$exit_status\" >> {6}\n\
+          builtin printf 'E\\0%s\\0%s\\0' \"$EPOCHREALTIME\" \"$exit_status\" >> {5}\n\
         }}\n\
         add-zsh-hook preexec _nia_mark_start\n\
         # Register the completion hook first: subsequent state hooks may\n\
@@ -325,9 +525,9 @@ fn prepare_zsh_history(id: &str) -> Result<PathBuf> {
           if [[ $BUFFER == \\?* ]]; then\n\
             local question=${{BUFFER#\\?}}\n\
             if [[ -n ${{question//[[:space:]]/}} ]]; then\n\
-              local tmp={3}.tmp.$$\n\
+              local tmp={2}.tmp.$$\n\
               ( umask 077; print -rn -- \"$question\" > \"$tmp\" )\n\
-              command mv -f -- \"$tmp\" {3}\n\
+              command mv -f -- \"$tmp\" {2}\n\
               BUFFER=''\n\
               CURSOR=0\n\
               zle reset-prompt\n\
@@ -337,14 +537,14 @@ fn prepare_zsh_history(id: &str) -> Result<PathBuf> {
           # Intercept only the literal exit/logout line, before the shell sees it.\n\
           # The UI asks for consent and later creates a one-shot approval file.\n\
           if [[ $BUFFER == exit || $BUFFER == logout ]]; then\n\
-            if [[ -f {4} ]]; then\n\
-              command rm -f -- {4}\n\
+            if [[ -f {3} ]]; then\n\
+              command rm -f -- {3}\n\
               zle .accept-line\n\
               return 0\n\
             fi\n\
-            local tmp={5}.tmp.$$\n\
+            local tmp={4}.tmp.$$\n\
             ( umask 077; print -r -- exit > \"$tmp\" )\n\
-            command mv -f -- \"$tmp\" {5}\n\
+            command mv -f -- \"$tmp\" {4}\n\
             BUFFER=''\n\
             CURSOR=0\n\
             zle reset-prompt\n\
@@ -353,16 +553,398 @@ fn prepare_zsh_history(id: &str) -> Result<PathBuf> {
           zle .accept-line\n\
         }}\n\
         zle -N accept-line _nia_ai_accept_line\n",
-        zsh_quote(&original_rc), zsh_quote(&history), zsh_quote(&base.join("state")), zsh_quote(&base.join("ai-request")),
+        zsh_quote(&history), zsh_quote(&base.join("state")), zsh_quote(&base.join("ai-request")),
         zsh_quote(&base.join("exit-approved")), zsh_quote(&base.join("exit-request")),
         zsh_quote(&base.join("command-marks")));
-    fs::write(base.join(".zshrc"), content)?;
-    Ok(base)
+    fs::write(base.join("nia-integration.zsh"), content)?;
+    Ok(())
 }
 
 #[cfg(test)]
 mod history_tests {
     use super::*;
+
+    fn isolated_zsh(base: &Path, home: &Path) -> Option<std::process::Command> {
+        let zsh = ["/bin/zsh", "/usr/bin/zsh"]
+            .into_iter()
+            .find(|path| Path::new(path).is_file());
+        let Some(zsh) = zsh else {
+            eprintln!("Skipping Zsh integration test: zsh is not installed");
+            return None;
+        };
+        let mut command = std::process::Command::new(zsh);
+        command
+            .env_clear()
+            .env("HOME", home)
+            .env("PATH", "/usr/bin:/bin")
+            .env("TERM", "xterm-256color")
+            .env("ZDOTDIR", base)
+            .current_dir(home)
+            .args(local_shell_args(zsh));
+        Some(command)
+    }
+
+    fn assert_zsh_success(mut command: std::process::Command, script: &str) {
+        let output = command.args(["-c", script]).output().unwrap();
+        assert!(
+            output.status.success(),
+            "Zsh failed: {:?}\nstdout: {}\nstderr: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
+    fn login_startup_loads_tool_path_before_installing_session_hooks() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path().join("user's home");
+        let base = temp.path().join("Nia session");
+        let cargo_bin = home.join("custom rust/bin");
+        fs::create_dir_all(&base).unwrap();
+        fs::create_dir_all(&cargo_bin).unwrap();
+        fs::write(
+            home.join(".zshenv"),
+            "typeset -ga nia_test_order=(env)\n[[ ! -v ZDOTDIR ]] || return 41\n",
+        )
+        .unwrap();
+        fs::write(home.join(".zprofile"), "nia_test_order+=(profile)\nexport CARGO_HOME=\"$HOME/custom rust\"\nexport PATH=\"$CARGO_HOME/bin:$PATH\"\n").unwrap();
+        fs::write(home.join(".zshrc"), "nia_test_order+=(rc)\n").unwrap();
+        fs::write(
+            home.join(".zlogin"),
+            "nia_test_order+=(login)\nHISTFILE=\"$HOME/shared-history\"\n",
+        )
+        .unwrap();
+        fs::write(
+            cargo_bin.join("cargo"),
+            "#!/bin/sh\nprintf 'test-cargo\\n'\n",
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(cargo_bin.join("cargo"), fs::Permissions::from_mode(0o700))
+                .unwrap();
+        }
+        write_zsh_startup(&base, None).unwrap();
+        let Some(mut command) = isolated_zsh(&base, &home) else {
+            return;
+        };
+        command.env("NIA_EXPECTED_HISTORY", base.join("shell_history"));
+        assert_zsh_success(
+            command,
+            r#"
+            [[ -o login && -o interactive ]] || exit 42
+            [[ ${(j:,:)nia_test_order} == env,profile,rc,login ]] || exit 43
+            [[ $(cargo) == test-cargo ]] || exit 44
+            [[ $HISTFILE == $NIA_EXPECTED_HISTORY ]] || exit 45
+            [[ ! -v ZDOTDIR ]] || exit 46
+            [[ ${preexec_functions[(I)_nia_mark_start]} -gt 0 ]] || exit 47
+            [[ ${precmd_functions[(I)_ember_capture_state]} -gt 0 ]] || exit 48
+            [[ ${widgets[accept-line]} == user:_nia_ai_accept_line ]] || exit 49
+        "#,
+        );
+    }
+
+    #[test]
+    fn zshenv_redirect_keeps_user_config_hooks_and_nested_shells() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path().join("home");
+        let custom = home.join("config zsh");
+        let base = temp.path().join("session");
+        fs::create_dir_all(&custom).unwrap();
+        fs::create_dir_all(&base).unwrap();
+        fs::write(
+            home.join(".zshenv"),
+            "export ZDOTDIR=\"$HOME/config zsh\"\n",
+        )
+        .unwrap();
+        fs::write(custom.join(".zprofile"), "export NIA_TEST_PROFILE=loaded\n").unwrap();
+        fs::write(custom.join(".zshrc"), "export NIA_TEST_RC=loaded\n").unwrap();
+        fs::write(custom.join(".zlogin"), "export NIA_TEST_LOGIN=loaded\n").unwrap();
+        write_zsh_startup(&base, None).unwrap();
+        let Some(mut command) = isolated_zsh(&base, &home) else {
+            return;
+        };
+        command
+            .env("NIA_EXPECTED_ZDOTDIR", &custom)
+            .env("NIA_EXPECTED_HISTORY", base.join("shell_history"));
+        assert_zsh_success(
+            command,
+            r#"
+            [[ $NIA_TEST_PROFILE:$NIA_TEST_RC:$NIA_TEST_LOGIN == loaded:loaded:loaded ]] || exit 51
+            [[ $ZDOTDIR == $NIA_EXPECTED_ZDOTDIR ]] || exit 52
+            [[ $HISTFILE == $NIA_EXPECTED_HISTORY ]] || exit 53
+            [[ ${preexec_functions[(I)_nia_mark_start]} -gt 0 ]] || exit 54
+            zsh -ic '[[ $ZDOTDIR == $NIA_EXPECTED_ZDOTDIR && $NIA_TEST_RC == loaded ]]' || exit 55
+        "#,
+        );
+    }
+
+    #[test]
+    fn inherited_zdotdir_can_redirect_again_in_zprofile() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path().join("home");
+        let original = home.join("original");
+        let redirected = home.join("redirected");
+        let base = temp.path().join("session");
+        for dir in [&original, &redirected, &base] {
+            fs::create_dir_all(dir).unwrap();
+        }
+        fs::write(home.join(".zshenv"), "exit 61\n").unwrap();
+        fs::write(original.join(".zshenv"), "export NIA_TEST_ENV=loaded\n").unwrap();
+        fs::write(
+            original.join(".zprofile"),
+            "export ZDOTDIR=\"$HOME/redirected\"\n",
+        )
+        .unwrap();
+        fs::write(redirected.join(".zshrc"), "export NIA_TEST_RC=redirected\n").unwrap();
+        fs::write(
+            redirected.join(".zlogin"),
+            "export NIA_TEST_LOGIN=redirected\n",
+        )
+        .unwrap();
+        write_zsh_startup(&base, Some(&original)).unwrap();
+        let Some(mut command) = isolated_zsh(&base, &home) else {
+            return;
+        };
+        command.env("NIA_EXPECTED_ZDOTDIR", &redirected);
+        assert_zsh_success(
+            command,
+            r#"
+            [[ $NIA_TEST_ENV:$NIA_TEST_RC:$NIA_TEST_LOGIN == loaded:redirected:redirected ]] || exit 62
+            [[ $ZDOTDIR == $NIA_EXPECTED_ZDOTDIR ]] || exit 63
+            [[ ${preexec_functions[(I)_nia_mark_start]} -gt 0 ]] || exit 64
+        "#,
+        );
+    }
+
+    #[test]
+    fn zlogin_redirect_and_venv_restore_run_before_first_command() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path().join("home");
+        let redirected = home.join("after-login");
+        let venv = home.join("python environment");
+        let base = temp.path().join("session");
+        for dir in [&redirected, &venv.join("bin"), &base] {
+            fs::create_dir_all(dir).unwrap();
+        }
+        fs::write(
+            home.join(".zlogin"),
+            "export ZDOTDIR=\"$HOME/after-login\"\nexport PATH=/usr/bin:/bin\n",
+        )
+        .unwrap();
+        fs::write(redirected.join(".zshrc"), "export NIA_NESTED_RC=loaded\n").unwrap();
+        fs::write(
+            venv.join("bin/activate"),
+            "export VIRTUAL_ENV=\"$EMBER_RESTORE_VENV\"\nexport PATH=\"$VIRTUAL_ENV/bin:$PATH\"\n",
+        )
+        .unwrap();
+        write_zsh_startup(&base, None).unwrap();
+        let Some(mut command) = isolated_zsh(&base, &home) else {
+            return;
+        };
+        command
+            .env("EMBER_RESTORE_VENV", &venv)
+            .env("NIA_EXPECTED_ZDOTDIR", &redirected);
+        assert_zsh_success(
+            command,
+            r#"
+            [[ $ZDOTDIR == $NIA_EXPECTED_ZDOTDIR ]] || exit 71
+            [[ $VIRTUAL_ENV == $EMBER_RESTORE_VENV && $path[1] == $VIRTUAL_ENV/bin ]] || exit 72
+            zsh -ic '[[ $NIA_NESTED_RC == loaded && $ZDOTDIR == $NIA_EXPECTED_ZDOTDIR ]]' || exit 73
+        "#,
+        );
+    }
+
+    #[test]
+    fn nonlogin_interactive_shell_installs_hooks_and_no_rcs_keeps_user_directory() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path().join("home");
+        let base = temp.path().join("session");
+        fs::create_dir_all(&home).unwrap();
+        fs::create_dir_all(&base).unwrap();
+        fs::write(home.join(".zshrc"), "export NIA_TEST_RC=loaded\n").unwrap();
+        write_zsh_startup(&base, None).unwrap();
+        let Some(mut command) = isolated_zsh(&base, &home) else {
+            return;
+        };
+        // -l was set by the production argument helper; explicitly turn it off.
+        command.arg("+l");
+        assert_zsh_success(command, "[[ $NIA_TEST_RC == loaded && ! -v ZDOTDIR && ${preexec_functions[(I)_nia_mark_start]} -gt 0 ]]");
+        for name in [".zshenv", ".zprofile"] {
+            fs::write(home.join(name), "unsetopt rcs\n").unwrap();
+            let Some(command) = isolated_zsh(&base, &home) else {
+                return;
+            };
+            assert_zsh_success(
+                command,
+                "[[ ! -v ZDOTDIR && -z ${NIA_TEST_RC-} && -o norcs ]]",
+            );
+            fs::remove_file(home.join(name)).unwrap();
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn interactive_pty_loads_existing_session_history_after_login() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path().join("home");
+        let base = temp.path().join("session");
+        fs::create_dir_all(&home).unwrap();
+        fs::create_dir_all(&base).unwrap();
+        fs::write(home.join(".zlogin"), "HISTFILE=\"$HOME/shared-history\"\n").unwrap();
+        fs::write(
+            base.join("shell_history"),
+            "echo previous-session-command\n",
+        )
+        .unwrap();
+        write_zsh_startup(&base, None).unwrap();
+        if isolated_zsh(&base, &home).is_none() {
+            return;
+        }
+
+        // Zsh -c intentionally does not import history. Use an actual interactive
+        // PTY and its normal input loop to test restoration, just as the app does.
+        let pair = native_pty_system()
+            .openpty(PtySize {
+                rows: 24,
+                cols: 80,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .unwrap();
+        let mut command = CommandBuilder::new("/usr/bin/env");
+        for arg in [
+            "-i".to_owned(),
+            format!("HOME={}", home.display()),
+            "PATH=/usr/bin:/bin".to_owned(),
+            "TERM=xterm-256color".to_owned(),
+            format!("ZDOTDIR={}", base.display()),
+            "zsh".to_owned(),
+        ] {
+            command.arg(arg);
+        }
+        for arg in local_shell_args("zsh") {
+            command.arg(*arg);
+        }
+        command.cwd(&home);
+        let mut child = pair.slave.spawn_command(command).unwrap();
+        drop(pair.slave);
+        // A real terminal consumes output while the shell runs. On macOS even
+        // process exit can wait for unread PTY output to drain.
+        let mut output = pair.master.try_clone_reader().unwrap();
+        let output_worker = thread::spawn(move || {
+            let _ = std::io::copy(&mut output, &mut std::io::sink());
+        });
+        let mut input = pair.master.take_writer().unwrap();
+        let result = temp.path().join("restored-history");
+        writeln!(input, "fc -ln 1 > {}", zsh_quote(&result)).unwrap();
+        writeln!(input, "builtin exit").unwrap();
+        input.flush().unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            if child.try_wait().unwrap().is_some() {
+                break;
+            }
+            if std::time::Instant::now() >= deadline {
+                let _ = child.kill();
+                panic!("Zsh did not finish the isolated history test");
+            }
+            thread::sleep(std::time::Duration::from_millis(10));
+        }
+        drop(input);
+        drop(pair.master);
+        output_worker.join().unwrap();
+        assert!(fs::read_to_string(result)
+            .unwrap()
+            .contains("echo previous-session-command"));
+        assert!(!home.join("shared-history").exists());
+    }
+
+    #[test]
+    fn startup_rewrite_drops_old_profiles_and_old_nia_wrapper_inheritance() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path().join("home");
+        let old = temp.path().join("old-config");
+        let empty = temp.path().join("empty-config");
+        let base = temp.path().join("session");
+        let nested = temp.path().join("new-session");
+        for dir in [&home, &old, &empty, &base, &nested] {
+            fs::create_dir_all(dir).unwrap();
+        }
+        fs::write(old.join(".zprofile"), "export NIA_STALE_PROFILE=bad\n").unwrap();
+        fs::write(home.join(".zshenv"), "export NIA_TEST_HOME_ENV=loaded\n").unwrap();
+        write_zsh_startup(&base, Some(&old)).unwrap();
+        write_zsh_startup(&base, Some(&empty)).unwrap();
+        let Some(command) = isolated_zsh(&base, &home) else {
+            return;
+        };
+        assert_zsh_success(
+            command,
+            "[[ -z ${NIA_STALE_PROFILE-} && $ZDOTDIR == */empty-config ]]",
+        );
+        // Simulate launching the app from an older Nia that exported its wrapper.
+        write_zsh_startup(&nested, Some(&base)).unwrap();
+        let Some(mut command) = isolated_zsh(&nested, &home) else {
+            return;
+        };
+        command.env("NIA_EXPECTED_HISTORY", nested.join("shell_history"));
+        assert_zsh_success(command, "[[ $NIA_TEST_HOME_ENV == loaded && ! -v ZDOTDIR && $HISTFILE == $NIA_EXPECTED_HISTORY ]]");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn live_resize_updates_both_pty_and_parser_from_bootstrap_dimensions() {
+        let temp = tempfile::tempdir().unwrap();
+        let pair = native_pty_system()
+            .openpty(PtySize {
+                rows: 30,
+                cols: 100,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .unwrap();
+        let child = pair
+            .slave
+            .spawn_command(CommandBuilder::new("/bin/cat"))
+            .unwrap();
+        let writer = pair.master.take_writer().unwrap();
+        let (_tx, rx) = mpsc::channel();
+        let mut terminal = LiveTerminal {
+            parser: vt100::Parser::new(
+                NonZeroU16::new(30).unwrap(),
+                NonZeroU16::new(100).unwrap(),
+                100,
+            ),
+            input: PtyInput::for_pty(pair.master.as_ref(), writer).unwrap(),
+            master: pair.master,
+            rx,
+            remote: false,
+            history_indexer: HistoryIndexer::default(),
+            state_path: temp.path().join("state"),
+            ai_request_path: None,
+            exit_request_path: None,
+            exit_approval_path: None,
+            exit_observed_polls: 0,
+            marks_file: None,
+            marks_offset: 0,
+            marks_buffer: Vec::new(),
+            pending_mark: None,
+            agent_resume_path: None,
+            _child: child,
+        };
+        for (rows, cols) in [(80, 160), (24, 72), (50, 120)] {
+            terminal.resize(rows, cols).unwrap();
+            let actual = terminal.master.get_size().unwrap();
+            assert_eq!((actual.rows, actual.cols), (rows, cols));
+            let (parser_rows, parser_cols) = terminal.parser.screen().size();
+            assert_eq!((parser_rows.get(), parser_cols.get()), (rows, cols));
+        }
+        terminal._child.kill().unwrap();
+        terminal._child.wait().unwrap();
+    }
+
     #[test]
     fn shell_quote_escapes_single_quotes() {
         assert_eq!(zsh_quote(Path::new("/tmp/a'b")), "'/tmp/a'\\''b'");
@@ -370,6 +952,15 @@ mod history_tests {
     #[test]
     fn tmux_name_is_shell_safe_and_deterministic() {
         assert_eq!(remote_tmux_name("a'b"), "nia-612762");
+    }
+    #[test]
+    fn agent_resume_accepts_explicit_safe_ids_only() {
+        let id = "123e4567-e89b-12d3-a456-426614174000";
+        assert_eq!(validated_agent_resume(&format!("claude --resume {id}")),
+                   Some(format!("claude --resume {id}")));
+        assert!(validated_agent_resume("claude --resume x; rm -rf ~").is_none());
+        assert!(validated_agent_resume("sudo claude --resume 123e4567").is_none());
+        assert!(validated_agent_resume("claude --continue").is_none());
     }
     #[test]
     fn ids_have_distinct_history_paths() {

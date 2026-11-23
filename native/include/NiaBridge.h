@@ -11,6 +11,7 @@ void nia_core_free(void *core);
 void nia_string_free(char *text);
 char *nia_last_error(void *core);
 char *nia_sessions(void *core);
+int32_t nia_rename_session(void *core, const char *session_id, const char *new_title);
 char *nia_command_marks(void *core, const char *session);
 char *nia_take_ai_queries(void *core);
 char *nia_take_exit_requests(void *core);
@@ -33,8 +34,14 @@ int32_t nia_reflow(void *core, const char *name);
 int32_t nia_set_session_color(void *core, const char *name, const char *color);
 int32_t nia_set_scrollback_limit(void *core, uint32_t lines);
 int32_t nia_scroll(void *core, const char *name, int32_t delta);
+int32_t nia_jump_to_command(void *core, const char *session, int64_t command_id);
 void nia_poll(void *core);
+int32_t nia_maintain(void *core);
+int32_t nia_flush_pending(void *core);
 char *nia_screen(void *core, const char *name);
+// NIA1 little-endian binary snapshot; NULL/length 0 when the revision is unchanged.
+uint8_t *nia_screen_snapshot(void *core, const char *name, uint64_t known_revision, size_t *out_len);
+void nia_snapshot_free(uint8_t *bytes, size_t len);
 #ifdef __cplusplus
 }
 #endif

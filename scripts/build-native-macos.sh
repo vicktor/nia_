@@ -8,7 +8,19 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
     exit 1
 fi
 command -v swiftc >/dev/null || { echo "Instala Xcode Command Line Tools (xcode-select --install)" >&2; exit 1; }
-command -v cargo >/dev/null || { echo "Instala Rust desde rustup.rs" >&2; exit 1; }
+# Existing installs may be outside a GUI-launched shell's PATH. Respect an
+# explicit CARGO_HOME and keep a cargo already selected by the user first.
+if ! command -v cargo >/dev/null 2>&1; then
+    NIA_CARGO_BIN="${CARGO_HOME:-$HOME/.cargo}/bin"
+    if [[ -x "$NIA_CARGO_BIN/cargo" ]]; then
+        export PATH="$NIA_CARGO_BIN:$PATH"
+    else
+        echo "No se encuentra cargo en PATH ni en $NIA_CARGO_BIN." >&2
+        echo "Si Rust ya está instalado, carga su entorno (source \"\${CARGO_HOME:-\$HOME/.cargo}/env\") o añade su binario a PATH." >&2
+        echo "Si todavía no está instalado, usa https://rustup.rs." >&2
+        exit 1
+    fi
+fi
 
 # Build the self-contained local inference helper on macOS. Model weights are
 # downloaded later in Preferences, never bundled with the application.
@@ -51,7 +63,7 @@ install_name_tool -id '@rpath/libnia_core.dylib' "$APP/Contents/Frameworks/libni
 swiftc -O -parse-as-library \
     -target "$(uname -m)-apple-macosx14.0" \
     -import-objc-header native/include/NiaBridge.h \
-    native/Sources/NiaApp.swift native/Sources/NiaTerminalView.swift native/Sources/NiaAI.swift native/Sources/NiaAIExecutionPolicy.swift native/Sources/NiaInternalAI.swift \
+    native/Sources/NiaApp.swift native/Sources/NiaScreenDecoder.swift native/Sources/NiaTerminalGeometry.swift native/Sources/NiaTerminalCursor.swift native/Sources/NiaTerminalView.swift native/Sources/NiaAI.swift native/Sources/NiaAIExecutionPolicy.swift native/Sources/NiaInternalAI.swift \
     -L target/release -lnia_core \
     -Xlinker -rpath -Xlinker '@executable_path/../Frameworks' \
     -framework AppKit -framework SwiftUI -framework Metal -framework MetalKit -framework CoreText \
@@ -76,7 +88,7 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
   <key>CFBundleExecutable</key><string>nia</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleIconFile</key><string>nia_.icns</string>
-  <key>CFBundleShortVersionString</key><string>0.7.2</string>
+  <key>CFBundleShortVersionString</key><string>0.7.6</string>
   <key>CFBundleVersion</key><string>1</string>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>NSHighResolutionCapable</key><true/>
