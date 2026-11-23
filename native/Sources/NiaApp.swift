@@ -233,9 +233,14 @@ private extension FocusedValues {
         let mode = saved?.mode ?? "off"
         splitMode = ["vertical", "horizontal"].contains(mode) && secondary != nil ? mode : "off"
         activePane = splitMode != "off" && saved?.focusedPane == 1 ? 1 : 0
-        for id in [selected, splitMode == "off" ? nil : secondary].compactMap({ $0 }) {
+        // Restore every tab's shell, not only the visible split panes.
+        // Previously only the selected/secondary PTYs were respawned, so
+        // Claude or another long-running CLI in an unfocused tab disappeared.
+        for id in tabIDs {
             if report(id.withCString({ nia_open_session(handle, $0) })) {
-                prepareScreen(for: id)
+                if id == selected || (splitMode != "off" && id == secondary) {
+                    prepareScreen(for: id)
+                }
             }
         }
         saveWorkspace()
@@ -802,7 +807,7 @@ struct MainWindow: View {
                         Text("No hay sesiones guardadas")
                     } else {
                         ForEach(saved) { item in
-                            Button(item.id) { model.activate(item.id) }
+                            Button(item.display_name) { model.activate(item.id) }
                         }
                     }
                 } label: {
