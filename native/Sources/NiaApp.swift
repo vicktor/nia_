@@ -681,53 +681,8 @@ struct MainWindow: View {
                 .padding(10)
             }
             .navigationSplitViewColumnWidth(min: 185, ideal: 245, max: 350)
-            // NavigationSplitView adds a system sidebar toggle by default.
-            // Remove it at the source instead of trying to hide AppKit's
-            // toolbar after SwiftUI has already installed it.
-            .toolbar(removing: .sidebarToggle)
         } detail: {
             VStack(spacing: 0) {
-                // Small controls live in the content area rather than inside
-                // macOS' size-managed glass toolbar. Their dimensions are
-                // exactly 28pt in light and dark appearances.
-                HStack(spacing: 8) {
-                    Button {
-                        model.sidebarVisibility = model.sidebarVisibility == .detailOnly ? .all : .detailOnly
-                    } label: {
-                        Image(systemName: "sidebar.left")
-                            .font(.system(size: 13, weight: .regular))
-                            .frame(width: 28, height: 28)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .help("Mostrar/ocultar sesiones")
-                    Spacer(minLength: 0)
-                    Menu {
-                        Button { model.setSplit("off") } label: {
-                            Label("Una sesión", systemImage: "rectangle")
-                        }
-                        Button { model.setSplit("vertical") } label: {
-                            Label("Lado a lado", systemImage: "rectangle.split.2x1")
-                        }
-                        Button { model.setSplit("horizontal") } label: {
-                            Label("Arriba y abajo", systemImage: "rectangle.split.1x2")
-                        }
-                    } label: {
-                        Image(systemName: model.splitMode == "vertical"
-                            ? "rectangle.split.2x1"
-                            : model.splitMode == "horizontal"
-                                ? "rectangle.split.1x2" : "rectangle")
-                            .font(.system(size: 13, weight: .regular))
-                            .frame(width: 28, height: 28)
-                            .contentShape(Rectangle())
-                    }
-                    .menuStyle(.borderlessButton)
-                    .help("Disposición de terminales")
-                }
-                .padding(.horizontal, 9)
-                .frame(height: 32)
-                .background(Color(nsColor: .windowBackgroundColor))
-
                 if let selected = model.selected {
                     if model.splitMode != "off", let second = model.secondary, second != selected {
                         if model.splitMode == "vertical" {
@@ -756,10 +711,30 @@ struct MainWindow: View {
         }
         .background(NiaWindowTransparency(opacity: model.selected == nil ? 1.0 : terminalOpacity))
         .navigationTitle(model.selected ?? "nia_")
-        // Apply visibility declaratively to the window scene: toggling
-        // NSWindow.toolbar.isVisible in an NSViewRepresentable is overridden
-        // by SwiftUI's next layout pass.
-        .toolbar(.hidden, for: .windowToolbar)
+        // Restore native macOS titlebar, including traffic-light controls,
+        // window dragging, and the normal system sidebar toggle.
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Menu {
+                    Button { model.setSplit("off") } label: {
+                        Label("Una sesión", systemImage: "rectangle")
+                    }
+                    Button { model.setSplit("vertical") } label: {
+                        Label("Lado a lado", systemImage: "rectangle.split.2x1")
+                    }
+                    Button { model.setSplit("horizontal") } label: {
+                        Label("Arriba y abajo", systemImage: "rectangle.split.1x2")
+                    }
+                } label: {
+                    Image(systemName: model.splitMode == "vertical"
+                        ? "rectangle.split.2x1"
+                        : model.splitMode == "horizontal"
+                            ? "rectangle.split.1x2" : "rectangle")
+                }
+                .menuStyle(.borderlessButton)
+                .help("Disposición de terminales")
+            }
+        }
         .sheet(isPresented: $showRemoteSetup) {
             VStack(alignment: .leading, spacing: 14) {
                 Text("Nueva sesión remota").font(.title2.bold())
@@ -1084,8 +1059,8 @@ private final class NiaTransparencyHost: NSView {
         guard let window else { return }
         let transparent = requestedOpacity < 0.999
         window.titlebarAppearsTransparent = false
-        // Toolbar visibility belongs to SwiftUI (.toolbar(.hidden,...))
-        // and must not be mutated during window appearance updates.
+        // Keep the standard NSWindow titlebar visible and unmanaged.
+        // Do not modify styleMask or hide the toolbar from an NSView host.
         window.isOpaque = !transparent
         window.backgroundColor = transparent ? .clear : .windowBackgroundColor
         installBackdrop(in: window)
