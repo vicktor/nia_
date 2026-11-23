@@ -168,3 +168,5 @@
 "Unknown source session" = "Unknown source session";
 "Unknown target session" = "Unknown target session";
 "Exit interception is only supported in local Zsh" = "Exit interception is only supported in local Zsh";
+"Abrir enlace" = "Open link";
+"Copiar enlace" = "Copy link";
