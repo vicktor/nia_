@@ -11,6 +11,7 @@ void nia_core_free(void *core);
 void nia_string_free(char *text);
 char *nia_last_error(void *core);
 char *nia_sessions(void *core);
+char *nia_command_marks(void *core, const char *session);
 char *nia_take_ai_queries(void *core);
 char *nia_take_exit_requests(void *core);
 int32_t nia_confirm_exit(void *core, const char *name);
