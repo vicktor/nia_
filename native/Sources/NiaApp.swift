@@ -215,9 +215,14 @@ private extension FocusedValues {
             UserDefaults.standard.set(true, forKey: "nia.workspace.migrated")
         }
         let existing = Set(sessions.map(\.id))
-        let candidates = saved?.tabs ?? (migrate
+        // SceneStorage may provide a new UUID on relaunch, even when older
+        // windows and their per-window layouts remain in SQLite. Recover all
+        // open sessions into the first window as a safe fallback. Additional
+        // Cmd+N windows still start empty, because those IDs are claimed.
+        let firstWindowWithoutLayout = saved == nil && NiaSharedCore.owners.isEmpty
+        let candidates = saved?.tabs ?? (firstWindowWithoutLayout
             ? sessions.filter { !$0.closed }.map(\.id)
-            : [saved?.primary, saved?.secondary].compactMap { $0 })
+            : [])
         var accepted: [String] = []
         for id in candidates where existing.contains(id) && !accepted.contains(id) {
             if NiaSharedCore.claim(id, window: windowID) { accepted.append(id) }
