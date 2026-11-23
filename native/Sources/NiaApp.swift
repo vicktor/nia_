@@ -66,6 +66,7 @@ private struct WorkspaceLayout: Codable {
     static let handle: UnsafeMutableRawPointer? = nia_core_new()
     static var owners: [String: String] = [:]
     static var aiQueue: [NiaAIQuery] = []
+    static var exitQueue: [String] = []
     static func claim(_ session: String, window: String) -> Bool {
         if let current = owners[session], current != window { return false }
         owners[session] = window
@@ -104,6 +105,7 @@ private extension FocusedValues {
     @Published private(set) var focusSession: String? = nil
     @Published var error: String?
     @Published var aiRequest: NiaAIQuery?
+    @Published var pendingExitSession: String?
     private var pendingAIRequests: [NiaAIQuery] = []
     @Published var sidebarVisibility: NavigationSplitViewVisibility = .all
     private var timer: Timer?
@@ -411,6 +413,17 @@ private extension FocusedValues {
         frames[id] = snap
         revisions[id, default: 0] &+= 1
     }
+    func approvePendingExit() {
+        guard let id = pendingExitSession, let handle else { return }
+        pendingExitSession = nil
+        if !report(id.withCString({ nia_confirm_exit(handle, $0) })) { return }
+    }
+
+    func cancelPendingExit() {
+        pendingExitSession = nil
+        // The Zsh line was discarded before execution. Shell is untouched.
+    }
+
     func showNextAIRequest() {
         guard aiRequest == nil, !pendingAIRequests.isEmpty else { return }
         aiRequest = pendingAIRequests.removeFirst()
@@ -419,6 +432,27 @@ private extension FocusedValues {
         guard let handle, windowID != nil else { return }
         nia_poll(handle)
         refreshSessions()
+        // A completed local PTY is archived by Rust. Remove its tab from
+        // whichever native window currently owns the presentation.
+        for id in tabIDs where sessions.first(where: { $0.id == id })?.closed == true {
+            archive(id)
+        }
+        let rawExitRequests = resultString(nia_take_exit_requests(handle))
+        if let data = rawExitRequests.data(using: .utf8),
+           let requested = try? JSONDecoder().decode([String].self, from: data) {
+            NiaSharedCore.exitQueue.append(contentsOf: requested)
+        }
+        let mine = NiaSharedCore.exitQueue.filter { tabIDs.contains($0) }
+        NiaSharedCore.exitQueue.removeAll { tabIDs.contains($0) }
+        for id in mine {
+            if !(UserDefaults.standard.object(forKey: "nia.confirmExit") as? Bool ?? true) {
+                _ = report(id.withCString { nia_confirm_exit(handle, $0) })
+            } else if pendingExitSession == nil {
+                pendingExitSession = id
+            } else {
+                NiaSharedCore.exitQueue.append(id)
+            }
+        }
         let payload = resultString(nia_take_ai_queries(handle))
         if let data = payload.data(using: .utf8),
            let incoming = try? JSONDecoder().decode([NiaAIQuery].self, from: data) {
@@ -685,6 +719,25 @@ struct MainWindow: View {
             .padding(22)
             .frame(width: 440)
         }
+        .confirmationDialog(
+            "¿Finalizar esta sesión?",
+            isPresented: Binding(
+                get: { model.pendingExitSession != nil },
+                set: { if !$0 { model.cancelPendingExit() } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Finalizar sesión", role: .destructive) {
+                model.approvePendingExit()
+            }
+            Button("Cancelar", role: .cancel) {
+                model.cancelPendingExit()
+            }
+        } message: {
+            if let name = model.pendingExitSession {
+                Text("La sesión «\(name)» sigue activa. ¿Quieres ejecutar exit y cerrarla?")
+            }
+        }
         .sheet(item: $model.aiRequest, onDismiss: {
             model.showNextAIRequest()
         }) { query in
@@ -754,10 +807,12 @@ struct NiaSettings: View {
 struct GeneralSettings: View {
     @AppStorage("nia.restoreSessions") private var restore = true
     @AppStorage("nia.copyOnSelect") private var copy = true
+    @AppStorage("nia.confirmExit") private var confirmExit = true
     var body: some View {
         Form {
             Toggle("Restaurar sesiones al abrir Nia", isOn: $restore)
             Toggle("Copiar automáticamente al seleccionar", isOn: $copy)
+            Toggle("Preguntar antes de cerrar una sesión con exit", isOn: $confirmExit)
             Text("Los historiales siguen guardándose en la base de datos existente.")
                 .foregroundStyle(.secondary).font(.caption)
         }.formStyle(.grouped)
