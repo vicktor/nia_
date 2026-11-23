@@ -85,7 +85,20 @@ The **View output** path also preserves CRLF text, repairs older derived indexes
 
 See [CHANGELOG-v0.7.5.md](CHANGELOG-v0.7.5.md) for automated checks, navigation limits and the macOS validation procedure.
 
+## Responsive typing and rendering (v0.7.6)
+
+The native app now uses one shared output clock at a target interval of 1/60 second, replacing the per-window 120 ms polls. Session metadata updates separately every 500 ms. Visible panes request a compact binary snapshot only when their terminal revision changes; unchanged session lists are not republished to SwiftUI.
+
+An ordered input writer also keeps large pastes and a busy PTY off the UI thread. Its bounded queue accepts each event completely or reports that it cannot be sent yet.
+
+Raw output and its text index are persisted by an ordered background worker. The live parser no longer waits for a file sync before showing echoed input. Queues are bounded and apply backpressure without dropping output. History navigation waits for pending writes, and normal application termination flushes accepted output. Output may be visible before it reaches durable storage: a forced termination or power loss can lose the still-pending tail.
+
+The cursor follows the parser's actual row, including empty rows, and its blink restarts on input or movement. New glyphs use an immutable Metal texture snapshot so the CPU does not overwrite a texture used by an earlier frame.
+
+See [CHANGELOG-v0.7.6.md](CHANGELOG-v0.7.6.md) for validation and the remaining macOS visual checks. The refresh interval is a scheduling target, not a measured end-to-end latency guarantee.
+
 ## Highlights
+
 
 | Area | Current capabilities | Important limits |
 | --- | --- | --- |

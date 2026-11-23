@@ -42,25 +42,6 @@ struct SessionEntry: Decodable, Identifiable, Hashable {
     let color: String
     let remote_host: String?
 }
-struct TerminalCell: Decodable, Equatable {
-    let t: String
-    let fg: Int32
-    let bg: Int32
-    let flags: UInt8
-    let wide: Bool
-    let continuation: Bool
-}
-struct ScreenSnapshot: Decodable {
-    let session_id: String
-    let cells: [[TerminalCell]]
-    let cursor_row: UInt16
-    let cursor_col: UInt16
-    let cursor_visible: Bool
-    let rows: UInt16
-    let cols: UInt16
-    let scrollback_offset: Int
-}
-
 struct NiaCommandMark: Decodable, Identifiable {
     let id: Int64
     let started_at: Double
@@ -95,6 +76,91 @@ private struct WorkspaceLayout: Codable {
     static var owners: [String: String] = [:]
     static var aiQueue: [NiaAIQuery] = []
     static var exitQueue: [String] = []
+    private struct WeakModel { weak var value: NiaModel? }
+    private static var models: [WeakModel] = []
+    private static var timer: Timer?
+    private static var terminationObserver: NSObjectProtocol?
+    private static var lastMaintenance = -Double.infinity
+    private static var lastMaintenanceError: String?
+    private static var stopping = false
+
+    static func string(_ value: UnsafeMutablePointer<CChar>?) -> String {
+        guard let value else { return "" }
+        defer { nia_string_free(value) }
+        return String(cString: value)
+    }
+    static func sessionEntries() -> [SessionEntry]? {
+        guard let handle,
+              let data = string(nia_sessions(handle)).data(using: .utf8) else { return nil }
+        return try? JSONDecoder().decode([SessionEntry].self, from: data)
+    }
+    static func register(_ model: NiaModel) {
+        models.removeAll { $0.value == nil }
+        models.append(WeakModel(value: model))
+        guard timer == nil, !stopping else { return }
+        // One clock for the process, including split panes and extra windows.
+        // All mutable core access stays serialized on the main actor. The Rust
+        // output pump only parses/queues bytes; its worker performs disk writes.
+        let poll = Timer(timeInterval: 1.0 / 60.0, repeats: true) { _ in
+            MainActor.assumeIsolated { pump() }
+        }
+        RunLoop.main.add(poll, forMode: .common)
+        timer = poll
+        if terminationObserver == nil {
+            terminationObserver = NotificationCenter.default.addObserver(
+                forName: NSApplication.willTerminateNotification, object: nil, queue: .main
+            ) { _ in
+                MainActor.assumeIsolated {
+                    guard !stopping else { return }
+                    stopping = true
+                    timer?.invalidate()
+                    timer = nil
+                    if let handle, nia_flush_pending(handle) != 0 {
+                        NSLog("Nia history flush: %@", string(nia_last_error(handle)))
+                    }
+                }
+            }
+        }
+    }
+    private static func pump() {
+        guard !stopping, let handle else { return }
+        models.removeAll { $0.value == nil }
+        guard !models.isEmpty else {
+            timer?.invalidate()
+            timer = nil
+            return
+        }
+        nia_poll(handle)
+        let now = ProcessInfo.processInfo.systemUptime
+        let maintenance = now - lastMaintenance >= 0.5
+        var entries: [SessionEntry]?
+        var backgroundError: String?
+        if maintenance {
+            lastMaintenance = now
+            if nia_maintain(handle) != 0 {
+                let message = NiaL10n.string(string(nia_last_error(handle)))
+                // Dismissing one error must not reopen an alert every 500 ms.
+                // A new error or a failure after recovery is reported again.
+                if message != lastMaintenanceError { backgroundError = message }
+                lastMaintenanceError = message
+            } else {
+                lastMaintenanceError = nil
+            }
+            entries = sessionEntries()
+            if let data = string(nia_take_exit_requests(handle)).data(using: .utf8),
+               let incoming = try? JSONDecoder().decode([String].self, from: data) {
+                exitQueue.append(contentsOf: incoming)
+            }
+            if let data = string(nia_take_ai_queries(handle)).data(using: .utf8),
+               let incoming = try? JSONDecoder().decode([NiaAIQuery].self, from: data) {
+                aiQueue.append(contentsOf: incoming)
+            }
+        }
+        for model in models.compactMap({ $0.value }) {
+            model.refreshAfterPoll(maintenance: maintenance, sessions: entries,
+                                   backgroundError: backgroundError)
+        }
+    }
     static func claim(_ session: String, window: String) -> Bool {
         if let current = owners[session], current != window { return false }
         owners[session] = window
@@ -137,8 +203,7 @@ private extension FocusedValues {
     @Published var timelineTarget: NiaTimelineTarget?
     private var pendingAIRequests: [NiaAIQuery] = []
     @Published var sidebarVisibility: NavigationSplitViewVisibility = .all
-    private var timer: Timer?
-    private var previousScreenBySession: [String: String] = [:]
+    private var screenGenerationBySession: [String: UInt64] = [:]
     private var paneSizes: [String: (rows: Int, columns: Int)] = [:]
 
     init() {
@@ -147,20 +212,10 @@ private extension FocusedValues {
         let saved = UserDefaults.standard.object(forKey: "nia.scrollbackLines") as? Int ?? 10000
         _ = nia_set_scrollback_limit(handle, UInt32(clamping: min(100000, max(1000, saved))))
         refreshSessions()
-        let poll = Timer(timeInterval: 0.12, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.tick() }
-        }
-        RunLoop.main.add(poll, forMode: .common)
-        timer = poll
-    }
-    deinit {
-        timer?.invalidate()
-        // Core lifetime belongs to this process. macOS tears it down at exit.
+        NiaSharedCore.register(self)
     }
     private func resultString(_ value: UnsafeMutablePointer<CChar>?) -> String {
-        guard let value else { return "" }
-        defer { nia_string_free(value) }
-        return String(cString: value)
+        NiaSharedCore.string(value)
     }
     private func report(_ code: Int32) -> Bool {
         guard code == 0 else { error = NiaL10n.string(resultString(nia_last_error(handle))); return false }
@@ -168,9 +223,7 @@ private extension FocusedValues {
         return true
     }
     func refreshSessions() {
-        guard let handle else { return }
-        let value = resultString(nia_sessions(handle))
-        if let data = value.data(using: .utf8), let entries = try? JSONDecoder().decode([SessionEntry].self, from: data) {
+        if let entries = NiaSharedCore.sessionEntries(), entries != sessions {
             sessions = entries
         }
     }
@@ -339,7 +392,7 @@ private extension FocusedValues {
         NiaSharedCore.release(name, window: windowID)
         frames.removeValue(forKey: name)
         revisions.removeValue(forKey: name)
-        previousScreenBySession.removeValue(forKey: name)
+        screenGenerationBySession.removeValue(forKey: name)
         paneSizes.removeValue(forKey: name)
         if pendingExitSession == name { pendingExitSession = nil }
         if secondary == name { secondary = nil; splitMode = "off"; activePane = 0 }
@@ -434,8 +487,14 @@ private extension FocusedValues {
     }
     func send(_ bytes: [UInt8], to id: String) {
         guard let handle, !bytes.isEmpty else { return }
-        _ = bytes.withUnsafeBufferPointer { buffer in
+        let status = bytes.withUnsafeBufferPointer { buffer in
             id.withCString { nia_send(handle, $0, buffer.baseAddress, buffer.count) }
+        }
+        // The PTY input queue accepts the entire event or reports a failure.
+        // Do not publish an unchanged error=nil on every successful keypress.
+        if status != 0 {
+            let message = NiaL10n.string(resultString(nia_last_error(handle)))
+            if error != message { error = message }
         }
     }
     /// Navigate the indexed transcript without sending anything to the shell.
@@ -484,23 +543,18 @@ private extension FocusedValues {
             _ = id.withCString { nia_resize(handle, $0, UInt16(clamping: size.rows), UInt16(clamping: size.columns)) }
         }
         nia_poll(handle)
-        let raw = id.withCString { resultString(nia_screen(handle, $0)) }
-        guard let data = raw.data(using: .utf8),
-              let snap = try? JSONDecoder().decode(ScreenSnapshot.self, from: data),
-              snap.session_id == id else { return }
-        previousScreenBySession[id] = raw
-        frames[id] = snap
-        revisions[id, default: 0] &+= 1
+        refreshScreen(for: id)
     }
     private func refreshScreen(for id: String) {
         guard let handle else { return }
-        let raw = id.withCString { resultString(nia_screen(handle, $0)) }
-        guard raw != previousScreenBySession[id],
-              let data = raw.data(using: .utf8),
-              let snap = try? JSONDecoder().decode(ScreenSnapshot.self, from: data),
-              snap.session_id == id else { return }
-        previousScreenBySession[id] = raw
-        frames[id] = snap
+        var length = 0
+        let known = screenGenerationBySession[id] ?? 0
+        guard let bytes = id.withCString({ nia_screen_snapshot(handle, $0, known, &length) }) else { return }
+        defer { nia_snapshot_free(bytes, length) }
+        let buffer = UnsafeRawBufferPointer(start: bytes, count: length)
+        guard let decoded = try? NiaScreenDecoder.decode(buffer, sessionID: id) else { return }
+        screenGenerationBySession[id] = decoded.revision
+        frames[id] = decoded.snapshot
         revisions[id, default: 0] &+= 1
     }
     func approvePendingExit() {
@@ -518,19 +572,20 @@ private extension FocusedValues {
         guard aiRequest == nil, !pendingAIRequests.isEmpty else { return }
         aiRequest = pendingAIRequests.removeFirst()
     }
-    private func tick() {
+    fileprivate func refreshAfterPoll(maintenance: Bool, sessions entries: [SessionEntry]?,
+                                      backgroundError: String?) {
         guard let handle, windowID != nil else { return }
-        nia_poll(handle)
-        refreshSessions()
+        if let backgroundError, error != backgroundError { error = backgroundError }
+        if let selected { refreshScreen(for: selected) }
+        if splitMode != "off", let secondary, secondary != selected {
+            refreshScreen(for: secondary)
+        }
+        guard maintenance else { return }
+        if let entries, entries != sessions { sessions = entries }
         // A completed local PTY is archived by Rust. Remove its tab from
         // whichever native window currently owns the presentation.
         for id in tabIDs where sessions.first(where: { $0.id == id })?.closed == true {
             archive(id)
-        }
-        let rawExitRequests = resultString(nia_take_exit_requests(handle))
-        if let data = rawExitRequests.data(using: .utf8),
-           let requested = try? JSONDecoder().decode([String].self, from: data) {
-            NiaSharedCore.exitQueue.append(contentsOf: requested)
         }
         let mine = NiaSharedCore.exitQueue.filter { tabIDs.contains($0) }
         NiaSharedCore.exitQueue.removeAll { tabIDs.contains($0) }
@@ -543,19 +598,10 @@ private extension FocusedValues {
                 NiaSharedCore.exitQueue.append(id)
             }
         }
-        let payload = resultString(nia_take_ai_queries(handle))
-        if let data = payload.data(using: .utf8),
-           let incoming = try? JSONDecoder().decode([NiaAIQuery].self, from: data) {
-            NiaSharedCore.aiQueue.append(contentsOf: incoming)
-        }
         let own = NiaSharedCore.aiQueue.filter { tabIDs.contains($0.session_id) }
         NiaSharedCore.aiQueue.removeAll { tabIDs.contains($0.session_id) }
         pendingAIRequests.append(contentsOf: own)
         showNextAIRequest()
-        if let selected { refreshScreen(for: selected) }
-        if splitMode != "off", let secondary, secondary != selected {
-            refreshScreen(for: secondary)
-        }
     }
 }
 

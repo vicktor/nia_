@@ -1,6 +1,6 @@
 [package]
 name = "nia"
-version = "0.7.5"
+version = "0.7.6"
 edition = "2021"
 autobins = false
 
@@ -9,6 +9,7 @@ description = "nia_, a native macOS terminal with Rust-backed persistent session
 
 [dependencies]
 anyhow = "1"
+libc = "0.2"
 portable-pty = "0.9"
 vt100 = "0.18"
 rusqlite = { version = "0.43", features = ["bundled"] }
