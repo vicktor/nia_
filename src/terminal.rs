@@ -249,7 +249,7 @@ fn prepare_zsh_history(id: &str) -> Result<PathBuf> {
               zle .accept-line\n\
               return 0\n\
             fi\n\
-            local tmp={5}.tmp.$\n\
+            local tmp={5}.tmp.$$\n\
             ( umask 077; print -r -- exit > \"$tmp\" )\n\
             command mv -f -- \"$tmp\" {5}\n\
             BUFFER=''\n\
