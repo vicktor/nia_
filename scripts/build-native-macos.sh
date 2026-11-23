@@ -69,6 +69,8 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 <plist version="1.0"><dict>
   <key>CFBundleName</key><string>nia_</string>
   <key>CFBundleDisplayName</key><string>nia_</string>
+  <key>CFBundleDevelopmentRegion</key><string>en</string>
+  <key>CFBundleLocalizations</key><array><string>en</string><string>es</string></array>
   <!-- Keep the existing bundle ID so existing preferences and Keychain entries remain accessible. -->
   <key>CFBundleIdentifier</key><string>dev.nia.terminal</string>
   <key>CFBundleExecutable</key><string>nia</string>
@@ -91,6 +93,11 @@ for size in 16 32 128 256 512; do
     sips -s format png -z "$twice" "$twice" "$ROOT/assets/nia-icon.png" --out "$ICONSET/icon_${size}x${size}@2x.png" >/dev/null
 done
 iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/nia_.icns"
+# Embed both app languages, preserving macOS native locale selection.
+for language in en es; do
+    mkdir -p "$APP/Contents/Resources/$language.lproj"
+    cp "$ROOT/native/Resources/$language.lproj/Localizable.strings" "$APP/Contents/Resources/$language.lproj/"
+done
 rm -rf "$(dirname "$ICONSET")"
 plutil -lint "$APP/Contents/Info.plist"
 # Inside-out signing: first the Rust dylib, then the app bundle.
