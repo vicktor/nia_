@@ -3,6 +3,20 @@ import SwiftUI
 import AppKit
 import UniformTypeIdentifiers
 
+// Unified localization for AppKit messages and Swift errors. SwiftUI Text/Label
+// use the scene's Locale environment; AppKit selects the same language here.
+enum NiaL10n {
+    static func string(_ key: String) -> String {
+        let code = UserDefaults.standard.string(forKey: "nia.language") ?? "system"
+        if code == "en" || code == "es",
+           let path = Bundle.main.path(forResource: code, ofType: "lproj"),
+           let bundle = Bundle(path: path) {
+            return bundle.localizedString(forKey: key, value: nil, table: nil)
+        }
+        return NSLocalizedString(key, comment: "")
+    }
+}
+
 // Font list is cached once; never enumerate fonts on each SwiftUI redraw.
 // Store the PostScript name, because families may contain proportional variants.
 private struct NiaFontChoice: Identifiable {
@@ -114,7 +128,7 @@ private extension FocusedValues {
 
     init() {
         handle = NiaSharedCore.handle
-        guard let handle else { error = NSLocalizedString("No se pudo abrir la base de datos de Nia", comment: ""); return }
+        guard let handle else { error = NiaL10n.string("No se pudo abrir la base de datos de Nia"); return }
         let saved = UserDefaults.standard.object(forKey: "nia.scrollbackLines") as? Int ?? 10000
         _ = nia_set_scrollback_limit(handle, UInt32(clamping: min(100000, max(1000, saved))))
         refreshSessions()
@@ -243,7 +257,7 @@ private extension FocusedValues {
         guard let handle, let windowID else { return }
         let adding = !tabIDs.contains(name)
         if adding && !NiaSharedCore.claim(name, window: windowID) {
-            error = NSLocalizedString("Esta sesión está abierta en otra ventana. Ciérrala allí para trasladarla.", comment: "")
+            error = NiaL10n.string("Esta sesión está abierta en otra ventana. Ciérrala allí para trasladarla.")
             return
         }
         // Explicitly keep the two panes distinct; selecting a session already
@@ -323,7 +337,7 @@ private extension FocusedValues {
         guard let handle, id != selected, let windowID else { return }
         let adding = !tabIDs.contains(id)
         if adding && !NiaSharedCore.claim(id, window: windowID) {
-            error = NSLocalizedString("Esta sesión pertenece a otra ventana.", comment: "")
+            error = NiaL10n.string("Esta sesión pertenece a otra ventana.")
             return
         }
         guard report(id.withCString({ nia_open_session(handle, $0) })) else {
@@ -472,10 +486,12 @@ private extension FocusedValues {
 private struct NiaWindowRoot: View {
     @SceneStorage("nia.workspace.identity") private var windowID = UUID().uuidString
     @StateObject private var model = NiaModel()
+    @AppStorage("nia.language") private var language = "system"
 
     var body: some View {
         MainWindow()
             .environmentObject(model)
+            .environment(\.locale, language == "system" ? Locale.autoupdatingCurrent : Locale(identifier: language))
             .focusedSceneValue(\.niaWindowModel, model)
             .frame(minWidth: 720, minHeight: 420)
             .onAppear { model.configureWindow(windowID) }
@@ -494,7 +510,7 @@ private struct NiaWindowRoot: View {
             CommandGroup(replacing: .appInfo) {
                 Button("Acerca de nia_") {
                     let github = URL(string: "https://github.com/vicktor/nia_")!
-                    let text = NSMutableAttributedString(string: NSLocalizedString("Source / Código: github.com/vicktor/nia_ · MPL-2.0", comment: ""))
+                    let text = NSMutableAttributedString(string: NiaL10n.string("Source / Código: github.com/vicktor/nia_ · MPL-2.0"))
                     let range = (text.string as NSString).range(of: "github.com/vicktor/nia_")
                     text.addAttribute(.link, value: github, range: range)
                     NSApp.orderFrontStandardAboutPanel(options: [
@@ -519,7 +535,7 @@ private struct NiaWindowRoot: View {
                 }.keyboardShortcut("b", modifiers: .command)
                 Divider()
                 ForEach(0..<9, id: \.self) { index in
-                    Button(String(format: NSLocalizedString("Sesión %d", comment: ""), index + 1)) { focusedModel?.selectSlot(index) }
+                    Button(String(format: NiaL10n.string("Sesión %d"), index + 1)) { focusedModel?.selectSlot(index) }
                         .keyboardShortcut(KeyEquivalent(Character(String(index+1))), modifiers: .command)
                 }
             }
@@ -735,7 +751,7 @@ struct MainWindow: View {
             }
         } message: {
             if let name = model.pendingExitSession {
-                Text(String(format: NSLocalizedString("La sesión «%@» sigue activa. ¿Quieres ejecutar exit y cerrarla?", comment: ""), name))
+                Text(String(format: NiaL10n.string("La sesión «%@» sigue activa. ¿Quieres ejecutar exit y cerrarla?"), name))
             }
         }
         .sheet(item: $model.aiRequest, onDismiss: {
@@ -805,11 +821,17 @@ struct NiaSettings: View {
     }
 }
 struct GeneralSettings: View {
+    @AppStorage("nia.language") private var language = "system"
     @AppStorage("nia.restoreSessions") private var restore = true
     @AppStorage("nia.copyOnSelect") private var copy = true
     @AppStorage("nia.confirmExit") private var confirmExit = true
     var body: some View {
         Form {
+            Picker("Idioma", selection: $language) {
+                Text("Automático (macOS)").tag("system")
+                Text("English").tag("en")
+                Text("Español").tag("es")
+            }
             Toggle("Restaurar sesiones al abrir Nia", isOn: $restore)
             Toggle("Copiar automáticamente al seleccionar", isOn: $copy)
             Toggle("Preguntar antes de cerrar una sesión con exit", isOn: $confirmExit)
