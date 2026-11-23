@@ -114,7 +114,7 @@ impl LiveTerminal {
         // Only a previously observed explicit resume command is replayed.
         // Never replay arbitrary shell history or unvalidated input.
         if let Some(command) = saved_agent {
-            terminal.send(format!("{command}\\r").as_bytes())?;
+            terminal.send(format!("{command}\r").as_bytes())?;
         }
         Ok(terminal)
     }
