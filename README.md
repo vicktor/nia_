@@ -42,6 +42,15 @@ In the visible terminal output, **⌘-click** a detected HTTP/HTTPS URL to open 
 - Restarting a local shell now starts with a **clean VT screen** instead of replaying a historical ANSI prompt into the live parser. Existing session logs and indexed scrollback remain stored on disk.
 - The generated Zsh startup configuration disables the standalone `%` end-of-line marker with `PROMPT_EOL_MARK=''`. This does not alter the shell prompt itself.
 
+## Command timeline (iTerm2-inspired, lightweight)
+
+In a local Zsh session, nia_ records **completed commands** together with their start time, working directory, duration, and exit code. Open the timeline with **⌘⇧H** for the focused session or **right-click a session → Command timeline**. Search by command or directory; copy a command or insert it into the terminal without executing it.
+
+- Uses built-in Zsh `preexec`/`precmd` hooks and an indexed SQLite table. No daemon, model, or periodic terminal text parsing.
+- The timeline loads at most the latest **200 commands** when opened; the data remains available in SQLite and encrypted backups after restart.
+- Initial implementation tracks **local Zsh only**. This is a searchable command log, not yet in-terminal scrollback anchors or time travel.
+- Commands may contain credentials. Treat the database and backups as sensitive.
+
 ## Highlights
 
 | Area | Current capabilities | Important limits |
