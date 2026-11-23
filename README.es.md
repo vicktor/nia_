@@ -36,6 +36,12 @@ nia_ es un **terminal experimental nativo para macOS** que combina una interfaz 
 
 En el terminal, haz **⌘+clic** sobre una URL HTTP/HTTPS para abrirla en el navegador predeterminado. También puedes hacer clic derecho en el enlace y elegir **Abrir enlace** o **Copiar enlace**. No se añaden escáneres en segundo plano, servicios de red ni más pasadas Metal: se examina únicamente la fila pulsada. No se abren esquemas distintos de HTTP/HTTPS ni URLs con credenciales incrustadas. Todavía no se detectan algunos enlaces partidos entre dos líneas.
 
+## Corrección de la barra y la restauración de sesiones
+
+- La toolbar nativa de macOS se oculta y se sustituye por dos controles de **28 pt** en la cabecera del terminal (barra lateral y split), evitando los botones gigantes del tema claro.
+- Al restaurar una shell local, se inicia con una **pantalla VT limpia**, sin inyectar prompts ANSI antiguos sobre el prompt nuevo. Los logs y el historial indexado siguen guardados en disco.
+- La configuración generada de Zsh desactiva el marcador de fin de línea `%` aislado mediante `PROMPT_EOL_MARK=''`. El prompt normal no cambia.
+
 ## Características
 
 | Área | Funcionalidades actuales | Limitaciones |
