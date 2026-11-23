@@ -160,6 +160,22 @@ impl Store {
         Ok(())
     }
 
+    /// A workspace layout belongs to one native macOS window.
+    pub fn window_workspace_layout(&self, id: &str) -> Result<Option<String>> {
+        let key = format!("workspace_window_v1:{id}");
+        self.conn.query_row("SELECT value FROM preferences WHERE key=?1",
+            [key], |r| r.get(0)).optional().map_err(Into::into)
+    }
+
+    pub fn save_window_workspace_layout(&self, id: &str, layout: &str) -> Result<()> {
+        let key = format!("workspace_window_v1:{id}");
+        self.conn.execute(
+            "INSERT INTO preferences(key,value) VALUES (?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            params![key,layout],
+        )?;
+        Ok(())
+    }
+
     pub fn list(&self) -> Result<Vec<SessionRecord>> {
         let mut stmt = self.conn.prepare("SELECT id, cwd, venv, closed FROM sessions ORDER BY sort_order ASC, rowid ASC")?;
         let rows = stmt.query_map([], |r| Ok(SessionRecord {

@@ -189,6 +189,49 @@ pub unsafe extern "C" fn nia_save_workspace_layout(p: *mut NiaCore, layout: *con
     }
 }
 
+/// Get the independently persisted layout for one native window.
+#[no_mangle]
+pub unsafe extern "C" fn nia_window_workspace(p: *mut NiaCore, window_id: *const c_char) -> *mut c_char {
+    if p.is_null() { return to_c(""); }
+    let core = &*p;
+    let id = match text_arg(window_id) { Ok(v) => v, Err(_) => return to_c("") };
+    if id.is_empty() || id.len() > 80 || !id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
+        return to_c("");
+    }
+    match core.store.window_workspace_layout(id) {
+        Ok(Some(layout)) => to_c(layout), _ => to_c("")
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn nia_save_window_workspace(
+    p: *mut NiaCore, window_id: *const c_char, layout: *const c_char
+) -> c_int {
+    if p.is_null() { return -1; }
+    let core = &mut *p;
+    let id = match text_arg(window_id) { Ok(v) => v, Err(e) => return core.set_error(e) };
+    if id.is_empty() || id.len() > 80
+        || !id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
+        return core.set_error("Invalid window ID");
+    }
+    let input = match text_arg(layout) { Ok(v) => v, Err(e) => return core.set_error(e) };
+    if input.len() > 16384 { return core.set_error("Window layout too large"); }
+    let value: serde_json::Value = match serde_json::from_str(input) {
+        Ok(v) => v, Err(e) => return core.set_error(e)
+    };
+    let valid_mode = matches!(value.get("mode").and_then(|v| v.as_str()), Some("off" | "vertical" | "horizontal"));
+    let valid_pane = matches!(value.get("focusedPane").and_then(|v| v.as_u64()), Some(0 | 1));
+    let valid_tabs = value.get("tabs").and_then(|v| v.as_array()).is_some_and(|a|
+        a.len() <= 128 && a.iter().all(|v| v.as_str().is_some_and(|id|
+            core.records.iter().any(|r| r.id == id))));
+    if !valid_mode || !valid_pane || !valid_tabs {
+        return core.set_error("Invalid window layout");
+    }
+    match core.store.save_window_workspace_layout(id, input) {
+        Ok(()) => 0, Err(e) => core.set_error(e)
+    }
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn nia_move_session(p: *mut NiaCore, source: *const c_char, target: *const c_char) -> c_int {
     if p.is_null() { return -1; }

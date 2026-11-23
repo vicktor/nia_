@@ -14,6 +14,8 @@ char *nia_sessions(void *core);
 char *nia_take_ai_queries(void *core);
 char *nia_workspace_layout(void *core);
 int32_t nia_save_workspace_layout(void *core, const char *layout);
+char *nia_window_workspace(void *core, const char *window_id);
+int32_t nia_save_window_workspace(void *core, const char *window_id, const char *layout);
 int32_t nia_move_session(void *core, const char *source, const char *target);
 int32_t nia_move_session_relative(void *core, const char *source, const char *target, int32_t after);
 int32_t nia_create_session(void *core, const char *name);

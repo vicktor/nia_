@@ -12,6 +12,17 @@ nia_ es un **terminal experimental nativo para macOS** que combina una interfaz 
 
 > **Versión de desarrollo, no completamente estabilizada.** Remote, el reflow ANSI y la recuperación de historiales siguen sujetos a pruebas. Haz backup antes de actualizar. No se afirma que la seguridad esté auditada ni se prometen consumos de memoria verificados.
 
+## Espacios de trabajo multiventana (experimental)
+
+- **⌘N** (Archivo → Nueva ventana) abre otra ventana nativa de nia_.
+- Cada ventana tiene pestañas ordenadas, split, foco y distribución independientes.
+- Todas comparten un único motor Rust/PTy; cerrar una pestaña no elimina su historial.
+- Usa el botón de carpeta con «+» para recuperar sesiones guardadas.
+- Una sesión solo se puede editar en una ventana a la vez para evitar conflictos de tamaño PTY.
+- Las distribuciones se guardan en SQLite y se incluyen en los backups cifrados.
+- La distribución anterior se migra una sola vez y las nuevas ventanas empiezan vacías.
+- La restauración de todas las ventanas tras cerrar nia_ todavía depende del sistema de escenas de macOS.
+
 ## Características
 
 | Área | Funcionalidades actuales | Limitaciones |
