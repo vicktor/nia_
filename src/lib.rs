@@ -28,7 +28,7 @@ pub struct NiaCore {
 struct AIQuery { session_id: String, question: String }
 
 #[derive(Serialize)]
-struct SessionInfo<'a> { id: &'a str, cwd: &'a str, closed: bool, venv: &'a Option<String>, color: String, remote_host: Option<String> }
+struct SessionInfo<'a> { id: &'a str, display_name: String, cwd: &'a str, closed: bool, venv: &'a Option<String>, color: String, remote_host: Option<String> }
 #[derive(Serialize, Clone)]
 struct CellData { t: String, fg: i32, bg: i32, flags: u8, wide: bool, continuation: bool }
 #[derive(Serialize)]
@@ -232,7 +232,7 @@ pub unsafe extern "C" fn nia_command_marks(
 pub unsafe extern "C" fn nia_sessions(p: *mut NiaCore) -> *mut c_char {
     if p.is_null() { return to_c("[]"); }
     let core = &*p;
-    let records: Vec<_> = core.records.iter().map(|r| SessionInfo { id: &r.id, cwd: &r.cwd, closed: r.closed, venv: &r.venv, color: core.store.session_color(&r.id).unwrap_or_else(|_| "#648ACA".to_string()), remote_host: core.store.remote_host(&r.id).ok().flatten() }).collect();
+    let records: Vec<_> = core.records.iter().map(|r| SessionInfo { id: &r.id, display_name: core.store.session_title(&r.id).unwrap_or_else(|_| r.id.clone()), cwd: &r.cwd, closed: r.closed, venv: &r.venv, color: core.store.session_color(&r.id).unwrap_or_else(|_| "#648ACA".to_string()), remote_host: core.store.remote_host(&r.id).ok().flatten() }).collect();
     json(&records)
 }
 /// Returns the atomic workspace layout saved in the existing Nia database.
@@ -319,6 +319,27 @@ pub unsafe extern "C" fn nia_save_window_workspace(
     }
     match core.store.save_window_workspace_layout(id, input) {
         Ok(()) => 0, Err(e) => core.set_error(e)
+    }
+}
+
+/// Change only the human-facing label. Never rekey a live PTY, history,
+/// tmux session, tab layout or any other persistent reference.
+#[no_mangle]
+pub unsafe extern "C" fn nia_rename_session(
+    p: *mut NiaCore, session_id: *const c_char, new_title: *const c_char
+) -> c_int {
+    if p.is_null() { return -1; }
+    let core = &mut *p;
+    let id = match text_arg(session_id) { Ok(v) => v, Err(e) => return core.set_error(e) };
+    let title = match text_arg(new_title) { Ok(v) => v.trim(), Err(e) => return core.set_error(e) };
+    if title.is_empty() || title.len() > 96 ||
+       title.chars().any(|c| c.is_control() || c == '/' || c == '\\') {
+        return core.set_error("Session name must be 1–96 bytes without slashes or controls");
+    }
+    if !core.records.iter().any(|r| r.id == id) { return core.set_error("Session not found") }
+    match core.store.set_session_title(id, title) {
+        Ok(()) => 0,
+        Err(e) => core.set_error(e),
     }
 }
 
