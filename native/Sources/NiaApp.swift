@@ -681,6 +681,10 @@ struct MainWindow: View {
                 .padding(10)
             }
             .navigationSplitViewColumnWidth(min: 185, ideal: 245, max: 350)
+            // NavigationSplitView adds a system sidebar toggle by default.
+            // Remove it at the source instead of trying to hide AppKit's
+            // toolbar after SwiftUI has already installed it.
+            .toolbar(removing: .sidebarToggle)
         } detail: {
             VStack(spacing: 0) {
                 // Small controls live in the content area rather than inside
@@ -752,6 +756,10 @@ struct MainWindow: View {
         }
         .background(NiaWindowTransparency(opacity: model.selected == nil ? 1.0 : terminalOpacity))
         .navigationTitle(model.selected ?? "nia_")
+        // Apply visibility declaratively to the window scene: toggling
+        // NSWindow.toolbar.isVisible in an NSViewRepresentable is overridden
+        // by SwiftUI's next layout pass.
+        .toolbar(.hidden, for: .windowToolbar)
         .sheet(isPresented: $showRemoteSetup) {
             VStack(alignment: .leading, spacing: 14) {
                 Text("Nueva sesión remota").font(.title2.bold())
@@ -1076,11 +1084,8 @@ private final class NiaTransparencyHost: NSView {
         guard let window else { return }
         let transparent = requestedOpacity < 0.999
         window.titlebarAppearsTransparent = false
-        // SwiftUI's NavigationSplitView injects an automatic sidebar toggle
-        // into macOS' size-managed toolbar. On newer macOS versions it can
-        // grow well beyond the titlebar. Use our own fixed-size controls above
-        // the terminal and hide the native toolbar altogether.
-        window.toolbar?.isVisible = false
+        // Toolbar visibility belongs to SwiftUI (.toolbar(.hidden,...))
+        // and must not be mutated during window appearance updates.
         window.isOpaque = !transparent
         window.backgroundColor = transparent ? .clear : .windowBackgroundColor
         installBackdrop(in: window)
