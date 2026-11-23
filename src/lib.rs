@@ -482,7 +482,19 @@ pub unsafe extern "C" fn nia_resize_fast(p: *mut NiaCore, name: *const c_char, r
     let (current_rows, current_cols) = term.parser.screen().size();
     if current_rows.get() == rows && current_cols.get() == cols { return 0; }
     match term.resize(rows, cols) {
-        Ok(()) => { core.disk_scroll.remove(id); 0 },
+        Ok(()) => {
+            // Resizing the pane must not discard an explicit jump into
+            // historical output. Dismissing the command-history sheet can
+            // trigger a SwiftUI relayout immediately after the jump.
+            // Recalculate the legal range for the new viewport height.
+            if let Some(state) = core.disk_scroll.get_mut(id) {
+                let total = core.store.history_visible_count(id).unwrap_or(0);
+                state.max_offset = total.saturating_sub(rows as u64);
+                state.offset = state.offset.min(state.max_offset);
+                if state.offset == 0 { core.disk_scroll.remove(id); }
+            }
+            0
+        },
         Err(e) => core.set_error(e),
     }
 }
