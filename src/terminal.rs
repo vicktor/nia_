@@ -365,7 +365,9 @@ fn prepare_zsh_history(id: &str) -> Result<PathBuf> {
         # Command timeline: built-in Zsh hooks, no subprocess or prompt edits.\n\
         zmodload zsh/datetime 2>/dev/null\n\
         function _nia_mark_start() {{\n\
-          builtin printf 'S\\0%s\\0%s\\0%s\\0' \"$EPOCHREALTIME\" \"$PWD\" \"$1\" >> {6}\n\
+          local started=$EPOCHREALTIME\n\
+          builtin printf 'S\\0%s\\0%s\\0%s\\0' \"$started\" \"$PWD\" \"$1\" >> {6}\n\
+          builtin printf '\\033]133;C;%s\\007' \"$started\"\n\
         }}\n\
         function _nia_mark_end() {{\n\
           local exit_status=$?\n\
