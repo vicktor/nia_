@@ -42,6 +42,15 @@ En el terminal, haz **⌘+clic** sobre una URL HTTP/HTTPS para abrirla en el nav
 - Al restaurar una shell local, se inicia con una **pantalla VT limpia**, sin inyectar prompts ANSI antiguos sobre el prompt nuevo. Los logs y el historial indexado siguen guardados en disco.
 - La configuración generada de Zsh desactiva el marcador de fin de línea `%` aislado mediante `PROMPT_EOL_MARK=''`. El prompt normal no cambia.
 
+## Historial de comandos (inspirado en iTerm2, ligero)
+
+En las sesiones Zsh locales, nia_ registra los **comandos completados** con fecha de inicio, directorio, duración y código de salida. Abre el historial mediante **⌘⇧H** en la sesión activa o **clic derecho en una sesión → Historial de comandos**. Puedes buscar por comando o directorio, copiar o insertar en la terminal sin ejecutarlo.
+
+- Aprovecha hooks internos `preexec`/`precmd` de Zsh y una tabla SQLite indexada. No hay demonios, modelos ni análisis periódico del texto del terminal.
+- Al abrir la vista se consultan los **200 comandos más recientes**; los datos permanecen en SQLite y los backups cifrados tras reiniciar.
+- Inicialmente disponible para **Zsh local**. Es un historial consultable, todavía no marcas navegables dentro del scrollback ni reproducción temporal.
+- Los comandos pueden contener credenciales. Protege la base de datos y las copias.
+
 ## Características
 
 | Área | Funcionalidades actuales | Limitaciones |
