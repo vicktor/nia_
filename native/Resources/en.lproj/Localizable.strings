@@ -188,4 +188,9 @@
 "Session name must be 1–96 bytes without slashes or controls" = "Session name must be 1–96 bytes without slashes or controls";
 "Ver salida" = "View output";
 "Ir al resultado de este comando" = "Jump to this command's output";
-"Sin marca de navegación: vuelve a ejecutar el comando" = "No navigation marker: run this command again";
+"Esta ejecución no tiene marca de navegación" = "This execution has no navigation marker";
+"Cannot repair history: original terminal log is unavailable" = "Cannot repair history: original terminal log is unavailable";
+"Cannot repair history: original terminal log is not a file" = "Cannot repair history: original terminal log is not a file";
+"Cannot repair history: original terminal log is empty" = "Cannot repair history: original terminal log is empty";
+"Terminal log changed while repairing history" = "Terminal log changed while repairing history";
+"The original command line is not available in the retained terminal history" = "The original command line is not available in the retained terminal history";

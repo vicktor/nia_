@@ -52,7 +52,7 @@ In a local Zsh session, nia_ records **completed commands** together with their 
 
 - Uses built-in Zsh `preexec`/`precmd` hooks and an indexed SQLite table. No daemon, model, or periodic terminal text parsing.
 - The timeline loads at most the latest **200 commands** when opened; the data remains available in SQLite and encrypted backups after restart.
-- Initial implementation tracks **local Zsh only**. This is a searchable command log, not yet in-terminal scrollback anchors or time travel.
+- Command recording currently tracks **local Zsh only**. **View output** navigates the indexed transcript when a command has a navigation marker.
 - Commands may contain credentials. Treat the database and backups as sensitive.
 
 ## Session rename and workspace recovery
@@ -72,12 +72,18 @@ Local Zsh now emits an invisible **OSC 133** marker at command start. The stream
 - Navigation uses nia_'s text-indexed historical scrollback; interactive fullscreen TUI rendering cannot be reconstructed pixel-for-pixel from text alone.
 - In-memory PTYs, shell state, agent resume and titlebar are unaffected.
 
-## Fix: full terminal height and command jumps
+## Terminal startup, shell environment and history (v0.7.5)
 
-- Revalidate the PTY's rows and columns after SwiftUI updates the Metal view, preventing an old 30-row grid from leaving the bottom of a tall window unused.
-- Preserve indexed history navigation on PTY resize. Closing the command timeline can trigger a layout change and must not jump back to the live bottom.
-- Include the echoed command line immediately before its OSC 133 output anchor, so **View output** starts at the original command when the text index contains it.
-- The existing Zsh/Claude session restoration and native titlebar are unchanged.
+The initial 30-row × 100-column PTY grid is a temporary fallback. Each visible session now receives its actual pane dimensions, including when SwiftUI reuses the same view for another tab without changing the window size. A size is remembered only after the backend accepts it. The view also checks the reported terminal grid, so reconnecting a PTY under the same session ID cannot keep an obsolete size.
+
+- Pane and terminal fill the available width and height. Geometry is measured after layout, ignoring unattached or zero-sized views; font and display-scale changes revalidate the grid.
+- Local Zsh, Bash and Fish start as interactive login shells. Zsh forwards the user's `.zshenv`, `.zprofile`, `.zshrc` and `.zlogin` with their intended `ZDOTDIR`, then installs nia_'s session history, hooks and virtualenv restoration.
+- The build script keeps `cargo` already selected in `PATH`. If it is missing there, it checks the existing `${CARGO_HOME:-$HOME/.cargo}/bin` installation. Its error distinguishes a missing path from a missing Rust installation.
+- Existing shells keep the environment with which they started. Test the new environment in a fresh session after launching the updated app. Build this first update in a terminal whose toolchain already works.
+
+The **View output** path also preserves CRLF text, repairs older derived indexes from retained raw logs when first needed, and keeps an absolute command position through new output and resizing. Recent commands stay in history mode even when their output fits in one screen.
+
+See [CHANGELOG-v0.7.5.md](CHANGELOG-v0.7.5.md) for automated checks, navigation limits and the macOS validation procedure.
 
 ## Highlights
 

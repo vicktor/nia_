@@ -52,7 +52,7 @@ En las sesiones Zsh locales, nia_ registra los **comandos completados** con fech
 
 - Aprovecha hooks internos `preexec`/`precmd` de Zsh y una tabla SQLite indexada. No hay demonios, modelos ni análisis periódico del texto del terminal.
 - Al abrir la vista se consultan los **200 comandos más recientes**; los datos permanecen en SQLite y los backups cifrados tras reiniciar.
-- Inicialmente disponible para **Zsh local**. Es un historial consultable, todavía no marcas navegables dentro del scrollback ni reproducción temporal.
+- El registro de comandos está disponible por ahora para **Zsh local**. **Ver salida** navega por el texto indexado cuando el comando tiene una marca de navegación.
 - Los comandos pueden contener credenciales. Protege la base de datos y las copias.
 
 ## Renombrar sesiones y recuperar espacios de trabajo
@@ -72,12 +72,18 @@ Zsh local emite una marca invisible **OSC 133** al iniciar cada comando. El inde
 - La navegación usa el scrollback textual indexado: una TUI a pantalla completa no puede reconstruirse píxel a píxel desde texto plano.
 - La PTY, Zsh, recuperación de agentes y barra superior no cambian.
 
-## Corrección: altura completa y navegación a comandos
+## Inicio del terminal, entorno de shell e historial (v0.7.5)
 
-- Revalidamos filas y columnas de la PTY después de cada actualización de SwiftUI de la vista Metal; una rejilla antigua de 30 filas no debe dejar la parte inferior de la ventana sin usar.
-- Conservamos la posición de historial indexado al redimensionar la PTY: cerrar el panel de comandos ya no debe devolvernos al final.
-- Incluimos la línea del comando anterior a la marca OSC 133, para que **Ver salida** muestre también el comando original si está en el índice.
-- No se modifica la recuperación de Claude/Zsh ni la barra de título nativa.
+La rejilla inicial de la PTY, de 30 filas × 100 columnas, es provisional. Cada sesión visible recibe ahora las dimensiones reales de su panel, incluso cuando SwiftUI reutiliza la misma vista para otra pestaña sin cambiar el tamaño de la ventana. Solo se recuerda una medida después de que el motor la acepte. La vista también comprueba la rejilla que devuelve el terminal, por lo que una PTY reconectada con el mismo ID no puede conservar un tamaño obsoleto.
+
+- El panel y el terminal ocupan todo el ancho y alto disponible. Se mide después del layout, ignorando vistas sin ventana o de tamaño cero; cambiar la fuente o la escala de pantalla vuelve a validar la rejilla.
+- Zsh, Bash y Fish locales arrancan como shells de inicio de sesión interactivas. Zsh carga `.zshenv`, `.zprofile`, `.zshrc` y `.zlogin` con el `ZDOTDIR` que corresponda al usuario, y después instala el historial, los hooks y la restauración del virtualenv de nia_.
+- El script de compilación respeta el `cargo` elegido en `PATH`. Si no lo encuentra, comprueba la instalación existente en `${CARGO_HOME:-$HOME/.cargo}/bin`. El mensaje distingue entre una ruta ausente y una instalación de Rust ausente.
+- Las shells ya abiertas conservan el entorno con el que arrancaron. Prueba el nuevo entorno en una sesión nueva después de abrir la app actualizada. Compila esta primera actualización desde un terminal en el que ya funcione la herramienta de compilación.
+
+La ruta de **Ver salida** también conserva el texto CRLF, repara los índices derivados antiguos desde los registros originales cuando se necesitan y mantiene una posición absoluta del comando aunque llegue más salida o cambie el tamaño. Los comandos recientes permanecen en la vista de historial aunque su salida quepa en una pantalla.
+
+Consulta [CHANGELOG-v0.7.5.md](CHANGELOG-v0.7.5.md) para las pruebas automáticas, los límites de navegación y la comprobación en macOS.
 
 ## Características
 

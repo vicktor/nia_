@@ -134,7 +134,7 @@ private func palette(_ code: Int32, foreground: Bool, dark: Bool) -> SIMD4<Float
 
 final class NiaMetalView: MTKView, MTKViewDelegate {
     var onBytes: (([UInt8]) -> Void)?
-    var onResize: ((Int, Int) -> Void)?
+    var onResize: ((Int, Int) -> Bool)?
     var onScroll: ((Int) -> Void)?
     // Files dropped from Finder are inserted as shell-quoted paths, never executed.
     private var hoveringFileDrop = false
@@ -154,6 +154,7 @@ final class NiaMetalView: MTKView, MTKViewDelegate {
             phase = true
             terminalFrame = nil
             needsDisplay = true
+            requestSizeReport()
         }
     }
     private var currentRevision: UInt64? = nil
@@ -185,7 +186,9 @@ final class NiaMetalView: MTKView, MTKViewDelegate {
     private var cellHeight: CGFloat = 18
     private var phase = true
     private var timer: Timer?
-    private var previousSize = [Int]()
+    private var sizeSync = NiaTerminalSizeSync()
+    private var sizeReportPending = false
+    private var atlasScale: CGFloat = 0
     private enum SelectionMode: Equatable { case linear, rectangular }
     private var selectionMode: SelectionMode = .linear
     private var selectionStart: (Int, Int)?
@@ -287,7 +290,9 @@ final class NiaMetalView: MTKView, MTKViewDelegate {
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        sizeSync.invalidate()
         if window != nil {
+            updateBackingScale()
             timer?.invalidate()
             let t = Timer(timeInterval: 0.55, repeats: true) { [weak self] _ in
                 guard let self else { return }
@@ -299,12 +304,22 @@ final class NiaMetalView: MTKView, MTKViewDelegate {
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
                 self.window?.makeFirstResponder(self)
-                self.reportSize()
+                self.requestSizeReport()
             }
         } else { timer?.invalidate(); timer = nil }
     }
+    override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        updateBackingScale()
+        requestSizeReport()
+    }
+    private func updateBackingScale() {
+        guard let window, window.backingScaleFactor != atlasScale else { return }
+        rebuildAtlas()
+    }
     private func rebuildAtlas() {
         let scale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
+        atlasScale = scale
         let requested = fontName == "system" ? nil : NSFont(name: fontName, size: fontSize * scale)
         // Fall back safely if the selected font was uninstalled between launches.
         let font = (requested?.isFixedPitch == true ? requested : nil)
@@ -313,18 +328,42 @@ final class NiaMetalView: MTKView, MTKViewDelegate {
         cellHeight = ceil(font.ascender - font.descender + font.leading) + 2
         if let device { atlas = GlyphAtlas(device: device, font: CTFontCreateWithName(font.fontName as CFString, font.pointSize, nil),
                                            cellWidth: Int(cellWidth), cellHeight: Int(cellHeight)) }
-        previousSize = []
-        reportSize()
+        sizeSync.invalidate()
+        requestSizeReport()
         needsDisplay = true
     }
-    override func layout() { super.layout(); reportSize() }
-    func reportSize() {
-        let scale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
-        let size = [max(1, Int(bounds.height * scale / cellHeight)),
-                    max(1, Int(bounds.width * scale / cellWidth))]
-        if size != previousSize { previousSize = size; onResize?(size[0],size[1]) }
+    override func layout() { super.layout(); requestSizeReport() }
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        requestSizeReport()
     }
-    func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) { reportSize() }
+    func requestSizeReport() {
+        guard !sizeReportPending else { return }
+        sizeReportPending = true
+        // Read the final bounds and CURRENT session/callback after SwiftUI's
+        // update/layout pass. Calling the model from updateNSView synchronously
+        // publishes a new screen while SwiftUI is still updating the old one.
+        // Coalesce only this run-loop turn; do not debounce a live resize.
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.sizeReportPending = false
+            self.reportSize()
+        }
+    }
+    private func reportSize() {
+        guard window != nil, !isHiddenOrHasHiddenAncestor,
+              let session = activeSessionID, let onResize else { return }
+        let pixels = convertToBacking(bounds).size
+        guard let size = NiaTerminalGrid.fitting(
+            width: Double(pixels.width), height: Double(pixels.height),
+            cellWidth: Double(cellWidth), cellHeight: Double(cellHeight)) else { return }
+        let observed = terminalFrame.flatMap { frame -> NiaTerminalGrid? in
+            guard frame.session_id == session else { return nil }
+            return NiaTerminalGrid(rows: Int(frame.rows), columns: Int(frame.cols))
+        }
+        sizeSync.report(size, session: session, observedSize: observed, resize: onResize)
+    }
+    func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) { requestSizeReport() }
 
     private func rowIsVisuallyBlank(_ row: Int, in frame: ScreenSnapshot) -> Bool {
         guard row >= 0 && row < frame.cells.count else { return true }
@@ -864,7 +903,7 @@ struct TerminalPanel: NSViewRepresentable {
     let focusEpoch: UInt64
     let onFocus: () -> Void
     let onInput: ([UInt8]) -> Void
-    let onResize: (Int,Int) -> Void
+    let onResize: (Int,Int) -> Bool
     let onScroll: (Int) -> Void
 
     func makeNSView(context: Context) -> NiaMetalView {
@@ -873,6 +912,7 @@ struct TerminalPanel: NSViewRepresentable {
         view.onResize = onResize
         view.onScroll = onScroll
         view.onFocus = onFocus
+        view.activeSessionID = sessionID
         return view
     }
     func updateNSView(_ view: NiaMetalView, context: Context) {
@@ -896,11 +936,8 @@ struct TerminalPanel: NSViewRepresentable {
         view.copyOnSelection = defaults.object(forKey:"nia.copyOnSelect") as? Bool ?? true
         view.fontName = fontName
         view.fontSize = CGFloat(fontSize)
-        // SwiftUI may attach a resized Metal view without calling AppKit's
-        // layout() after the callback has been installed. Revalidate rows
-        // against its actual bounds on every update (reportSize deduplicates).
-        // This keeps the PTY tall enough to reach the bottom of the panel.
-        view.reportSize()
+        // Also revalidate when a PTY/snapshot changes without any NSView resize.
+        view.requestSizeReport()
         // Rendering is triggered by a changed snapshot or cursor timer.
     }
 }

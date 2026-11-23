@@ -11,7 +11,9 @@ use terminal::LiveTerminal;
 
 
 #[derive(Clone, Copy)]
-struct DiskScroll { offset: u64, max_offset: u64 }
+struct DiskScroll {
+    first_line: i64,
+}
 
 pub struct NiaCore {
     store: Store,
@@ -52,6 +54,18 @@ unsafe fn text_arg<'a>(p: *const c_char) -> Result<&'a str, String> {
 }
 impl NiaCore {
     fn set_error(&mut self, value: impl ToString) -> c_int { self.last_error = value.to_string(); -1 }
+    fn ensure_history_index(&mut self, id: &str) -> Result<(), String> {
+        if let Some(indexer) = self
+            .store
+            .ensure_history_index(id)
+            .map_err(|error| error.to_string())?
+        {
+            if let Some(term) = self.live.get_mut(id) {
+                term.history_indexer = indexer;
+            }
+        }
+        Ok(())
+    }
     fn refresh(&mut self) {
         // Keep sessions alive even when they aren't visible.
         for (id, term) in &mut self.live {
@@ -211,21 +225,31 @@ pub unsafe extern "C" fn nia_confirm_exit(p: *mut NiaCore, name: *const c_char) 
 }
 
 /// Read a bounded timeline only when the user opens the history panel.
-/// This does not touch terminal output, session state or shell execution.
+/// Repair derived text/anchors first; original output and shell state are untouched.
 #[no_mangle]
-pub unsafe extern "C" fn nia_command_marks(
-    p: *mut NiaCore, session: *const c_char
-) -> *mut c_char {
-    if p.is_null() { return to_c("[]") }
-    let core = &*p;
+pub unsafe extern "C" fn nia_command_marks(p: *mut NiaCore, session: *const c_char) -> *mut c_char {
+    if p.is_null() {
+        return to_c("[]");
+    }
+    let core = &mut *p;
     let id = match text_arg(session) {
         Ok(id) => id,
-        Err(_) => return to_c("[]")
+        Err(_) => return to_c("[]"),
     };
-    if !core.records.iter().any(|r| r.id == id) { return to_c("[]") }
+    if !core.records.iter().any(|r| r.id == id) {
+        return to_c("[]");
+    }
+    // Repair before has_anchor is queried, otherwise a recoverable raw OSC
+    // marker can remain unreachable behind a disabled "View output" button.
+    if let Err(error) = core.ensure_history_index(id) {
+        core.set_error(error);
+    }
     match core.store.recent_command_marks(id, 200) {
         Ok(entries) => json(&entries),
-        Err(_) => to_c("[]"),
+        Err(error) => {
+            core.set_error(error);
+            to_c("[]")
+        }
     }
 }
 
@@ -472,29 +496,33 @@ pub unsafe extern "C" fn nia_send(p: *mut NiaCore, name: *const c_char, data: *c
 /// Update the PTY window size immediately, without replaying the ANSI log.
 /// The shell must see the new column count before it emits its next line.
 #[no_mangle]
-pub unsafe extern "C" fn nia_resize_fast(p: *mut NiaCore, name: *const c_char, rows: u16, cols: u16) -> c_int {
-    if p.is_null() { return -1; }
+pub unsafe extern "C" fn nia_resize_fast(
+    p: *mut NiaCore,
+    name: *const c_char,
+    rows: u16,
+    cols: u16,
+) -> c_int {
+    if p.is_null() {
+        return -1;
+    }
     let core = &mut *p;
-    let id = match text_arg(name) { Ok(s) => s, Err(e) => return core.set_error(e) };
-    let Some(term) = core.live.get_mut(id) else { return core.set_error("Session not running"); };
+    let id = match text_arg(name) {
+        Ok(s) => s,
+        Err(e) => return core.set_error(e),
+    };
+    let Some(term) = core.live.get_mut(id) else {
+        return core.set_error("Session not running");
+    };
     let rows = rows.max(1);
     let cols = cols.max(1);
     let (current_rows, current_cols) = term.parser.screen().size();
-    if current_rows.get() == rows && current_cols.get() == cols { return 0; }
+    if current_rows.get() == rows && current_cols.get() == cols {
+        return 0;
+    }
     match term.resize(rows, cols) {
-        Ok(()) => {
-            // Resizing the pane must not discard an explicit jump into
-            // historical output. Dismissing the command-history sheet can
-            // trigger a SwiftUI relayout immediately after the jump.
-            // Recalculate the legal range for the new viewport height.
-            if let Some(state) = core.disk_scroll.get_mut(id) {
-                let total = core.store.history_visible_count(id).unwrap_or(0);
-                state.max_offset = total.saturating_sub(rows as u64);
-                state.offset = state.offset.min(state.max_offset);
-                if state.offset == 0 { core.disk_scroll.remove(id); }
-            }
-            0
-        },
+        // Disk history holds an absolute top row, independent of viewport
+        // height. A resize must neither move that row nor return to live output.
+        Ok(()) => 0,
         Err(e) => core.set_error(e),
     }
 }
@@ -526,27 +554,66 @@ pub unsafe extern "C" fn nia_screen(p: *mut NiaCore, name: *const c_char) -> *mu
     let screen = term.parser.screen();
     let (height,width) = screen.size();
     if let Some(state) = core.disk_scroll.get(id) {
-        // The count was captured on entry to disk history; do not issue
-        // a full-table COUNT query on every 120 ms render tick.
-        let offset = state.offset.min(state.max_offset);
         // Deep history: only a viewport-sized page is materialized. The original
         // VT stream remains on disk separately for lossless forensic recovery.
         let line_count = height.get() as usize;
-        let lines = core.store.history_visible_page(id, offset, line_count).unwrap_or_default();
-        if !lines.is_empty() {
+        let lines = core
+            .store
+            .history_page_from(id, state.first_line, line_count)
+            .unwrap_or_default();
         let mut grid = vec![];
         let padding = line_count.saturating_sub(lines.len());
-        for _ in 0..padding { grid.push(vec![CellData { t: " ".into(), fg:-1,bg:-1,flags:0,wide:false,continuation:false }; width.get() as usize]); }
         for line in lines {
-            let mut cells = line.chars().take(width.get() as usize).map(|ch| CellData {
-                t:ch.to_string(), fg:-1,bg:-1,flags:0,wide:false,continuation:false
-            }).collect::<Vec<_>>();
-            while cells.len() < width.get() as usize { cells.push(CellData {t:" ".into(),fg:-1,bg:-1,flags:0,wide:false,continuation:false}); }
+            let mut cells = line
+                .chars()
+                .take(width.get() as usize)
+                .map(|ch| CellData {
+                    t: ch.to_string(),
+                    fg: -1,
+                    bg: -1,
+                    flags: 0,
+                    wide: false,
+                    continuation: false,
+                })
+                .collect::<Vec<_>>();
+            while cells.len() < width.get() as usize {
+                cells.push(CellData {
+                    t: " ".into(),
+                    fg: -1,
+                    bg: -1,
+                    flags: 0,
+                    wide: false,
+                    continuation: false,
+                });
+            }
             grid.push(cells);
         }
-        return json(&ScreenData {session_id:id.to_string(),cells:grid,cursor_row:0,cursor_col:0,cursor_visible:false,
-            rows:height.get(),cols:width.get(),scrollback_offset: offset as usize});
+        // Short/recent commands still begin at the top. Empty space belongs
+        // below them; it must not silently select the unrelated live screen.
+        for _ in 0..padding {
+            grid.push(vec![
+                CellData {
+                    t: " ".into(),
+                    fg: -1,
+                    bg: -1,
+                    flags: 0,
+                    wide: false,
+                    continuation: false
+                };
+                width.get() as usize
+            ]);
         }
+        return json(&ScreenData {
+            session_id: id.to_string(),
+            cells: grid,
+            cursor_row: 0,
+            cursor_col: 0,
+            cursor_visible: false,
+            // Nonzero marks explicit history mode, including a jump near the tail.
+            rows: height.get(),
+            cols: width.get(),
+            scrollback_offset: 1,
+        });
     }
     let mut grid = Vec::with_capacity(height.get() as usize);
     for row in 0..height.get() {
@@ -591,68 +658,350 @@ pub unsafe extern "C" fn nia_set_scrollback_limit(p: *mut NiaCore, lines: u32) -
     0
 }
 
-/// Positive delta scrolls into older output; negative delta returns toward live output.
 /// Jump to the actual output of a completed command using its OSC 133
 /// anchor. Never executes the command or mutates the running shell.
 #[no_mangle]
 pub unsafe extern "C" fn nia_jump_to_command(
-    p: *mut NiaCore, session: *const c_char, command_id: i64
+    p: *mut NiaCore,
+    session: *const c_char,
+    command_id: i64,
 ) -> c_int {
-    if p.is_null() { return -1; }
+    if p.is_null() {
+        return -1;
+    }
     let core = &mut *p;
-    let id = match text_arg(session) { Ok(value) => value, Err(e) => return core.set_error(e) };
-    let Some(term) = core.live.get(id) else { return core.set_error("Session is not running") };
-    let height = term.parser.screen().size().0.get() as u64;
-    match core.store.readable_lines_since_command(id, command_id) {
-        Ok(Some(lines_after)) => {
-            let total = core.store.history_visible_count(id).unwrap_or(0);
-            let max_offset = total.saturating_sub(height);
-            let offset = lines_after.saturating_sub(height).min(max_offset);
-            if offset > 0 {
-                core.disk_scroll.insert(id.to_string(), DiskScroll { offset, max_offset });
-            } else {
-                core.disk_scroll.remove(id);
-            }
+    let id = match text_arg(session) {
+        Ok(value) => value,
+        Err(e) => return core.set_error(e),
+    };
+    if !core.live.contains_key(id) {
+        return core.set_error("Session is not running");
+    }
+    if let Err(error) = core.ensure_history_index(id) {
+        return core.set_error(error);
+    }
+    match core.store.command_start_line(id, command_id) {
+        Ok(Some(first_line)) => {
+            core.disk_scroll
+                .insert(id.to_string(), DiskScroll { first_line });
             0
-        },
-        Ok(None) => core.set_error("This command has no navigation marker (run it again in this version of nia_)"),
+        }
+        Ok(None) => core.set_error(
+            "The original command line is not available in the retained terminal history",
+        ),
         Err(e) => core.set_error(e),
     }
 }
 
+/// Positive delta scrolls into older output; negative delta returns toward live output.
 #[no_mangle]
 pub unsafe extern "C" fn nia_scroll(p: *mut NiaCore, name: *const c_char, delta: i32) -> c_int {
-    if p.is_null() { return -1; }
+    if p.is_null() {
+        return -1;
+    }
     let core = &mut *p;
-    let id = match text_arg(name) { Ok(s) => s, Err(e) => return core.set_error(e) };
-    let Some(term) = core.live.get_mut(id) else { return core.set_error("Session not running"); };
-    if core.disk_scroll.contains_key(id) {
-        let state = core.disk_scroll.get_mut(id).expect("checked above");
-        let max_offset = state.max_offset;
-        if delta > 0 {
-            state.offset = state.offset.saturating_add(delta as u64).min(max_offset);
-        } else {
-            state.offset = state.offset.saturating_sub(delta.unsigned_abs() as u64);
-        }
-        if delta < 0 && state.offset == 0 { core.disk_scroll.remove(id); }
-        return 0;
+    let id = match text_arg(name) {
+        Ok(s) => s,
+        Err(e) => return core.set_error(e),
+    };
+    let Some(term) = core.live.get_mut(id) else {
+        return core.set_error("Session not running");
+    };
+    let height = term.parser.screen().size().0.get() as usize;
+    if let Some(state) = core.disk_scroll.get(id).copied() {
+        return match core
+            .store
+            .history_scroll_top(id, state.first_line, delta, height)
+        {
+            Ok(Some(first_line)) => {
+                core.disk_scroll
+                    .insert(id.to_string(), DiskScroll { first_line });
+                0
+            }
+            Ok(None) => {
+                core.disk_scroll.remove(id);
+                term.parser.screen_mut().set_scrollback(0);
+                0
+            }
+            Err(error) => core.set_error(error),
+        };
     }
     let offset = term.parser.screen().scrollback();
-    let next = if delta >= 0 { offset.saturating_add(delta as usize) }
-               else { offset.saturating_sub(delta.unsigned_abs() as usize) };
+    let next = if delta >= 0 {
+        offset.saturating_add(delta as usize)
+    } else {
+        offset.saturating_sub(delta.unsigned_abs() as usize)
+    };
     term.parser.screen_mut().set_scrollback(next);
     if delta > 0 && term.parser.screen().scrollback() == offset {
         // Reached the in-memory limit. Enter indexed text history.
-        let total = core.store.history_visible_count(id).unwrap_or(0);
-        let viewport = term.parser.screen().size().0.get() as u64;
-        let max_offset = total.saturating_sub(viewport);
-        if max_offset > 0 {
-            core.disk_scroll.insert(id.to_string(), DiskScroll {
-                offset: (delta as u64).min(max_offset), max_offset
-            });
+        if let Err(error) = core.ensure_history_index(id) {
+            return core.set_error(error);
+        }
+        match core.store.history_top_from_end(id, next as u64, height) {
+            Ok(Some(first_line)) => {
+                core.disk_scroll
+                    .insert(id.to_string(), DiskScroll { first_line });
+            }
+            Ok(None) => {}
+            Err(error) => return core.set_error(error),
         }
     }
     0
+}
+
+#[cfg(test)]
+mod command_navigation_tests {
+    use super::*;
+
+    struct Fixture {
+        core: NiaCore,
+        _temp: tempfile::TempDir,
+        session: CString,
+        mark_id: i64,
+    }
+    impl Fixture {
+        fn fresh(height: u16) -> Self {
+            let temp = tempfile::tempdir().unwrap();
+            let store = Store::for_tests(temp.path().to_path_buf()).unwrap();
+            let term = LiveTerminal::for_history_tests(height, 80).unwrap();
+            let mut live = HashMap::new();
+            live.insert("test".into(), term);
+            Self {
+                core: NiaCore {
+                    store,
+                    records: vec![SessionRecord {
+                        id: "test".into(),
+                        cwd: "/tmp".into(),
+                        venv: None,
+                        closed: false,
+                    }],
+                    live,
+                    last_error: String::new(),
+                    scrollback_lines: 100,
+                    disk_scroll: HashMap::new(),
+                    ai_queries: Vec::new(),
+                    exit_requests: Vec::new(),
+                },
+                _temp: temp,
+                session: CString::new("test").unwrap(),
+                mark_id: 0,
+            }
+        }
+        fn new(raw: &[u8], height: u16) -> Self {
+            Self::with_log(raw, height, true)
+        }
+        fn with_log(raw: &[u8], height: u16, legacy_index: bool) -> Self {
+            let mut fixture = Self::fresh(height);
+            fixture
+                .core
+                .store
+                .append_command_marks("test", &[(1000.5, 1, 0, "/tmp".into(), "command".into())])
+                .unwrap();
+            Store::append_and_sync(&mut fixture.core.store.log_file("test").unwrap(), raw).unwrap();
+            if legacy_index {
+                // Simulate the legacy CRLF bug while retaining its usable OSC mark.
+                fixture
+                    .core
+                    .store
+                    .append_history_lines("test", &["".into()], &[(1000.5, 1)])
+                    .unwrap();
+            }
+            fixture.mark_id = fixture.core.store.recent_command_marks("test", 1).unwrap()[0].id;
+            let term = fixture.core.live.get_mut("test").unwrap();
+            for _ in 0..40 {
+                term.parser.process(b"old live row\r\n");
+            }
+            term.parser.process(b"LIVE END");
+            fixture
+        }
+        fn jump(&mut self) -> i32 {
+            unsafe { nia_jump_to_command(&mut self.core, self.session.as_ptr(), self.mark_id) }
+        }
+        fn screen(&mut self) -> serde_json::Value {
+            unsafe {
+                let output = nia_screen(&mut self.core, self.session.as_ptr());
+                let result = serde_json::from_slice(CStr::from_ptr(output).to_bytes()).unwrap();
+                nia_string_free(output);
+                result
+            }
+        }
+        fn timeline(&mut self) -> serde_json::Value {
+            unsafe {
+                let output = nia_command_marks(&mut self.core, self.session.as_ptr());
+                let result = serde_json::from_slice(CStr::from_ptr(output).to_bytes()).unwrap();
+                nia_string_free(output);
+                result
+            }
+        }
+        fn rows(&mut self) -> Vec<String> {
+            self.screen()["cells"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|row| {
+                    row.as_array()
+                        .unwrap()
+                        .iter()
+                        .map(|cell| cell["t"].as_str().unwrap())
+                        .collect::<String>()
+                        .trim_end()
+                        .to_owned()
+                })
+                .collect()
+        }
+        fn append(&mut self, bytes: &[u8]) {
+            Store::append_and_sync(&mut self.core.store.log_file("test").unwrap(), bytes).unwrap();
+            let term = self.core.live.get_mut("test").unwrap();
+            let lines = term.history_indexer.ingest(bytes);
+            let anchors = term.history_indexer.take_anchors();
+            self.core
+                .store
+                .append_history_lines("test", &lines, &anchors)
+                .unwrap();
+        }
+    }
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            for term in self.core.live.values_mut() {
+                let _ = term._child.kill();
+                let _ = term._child.wait();
+            }
+        }
+    }
+
+    #[test]
+    fn long_command_output_starts_at_command_and_stays_there_during_resize_and_append() {
+        let mut raw = String::from("earlier output\r\n$ command\r\n\x1b]133;C;1000.5\x07");
+        for line in 1..=100 {
+            raw.push_str(&format!("{line}\r\n"));
+        }
+        let mut fixture = Fixture::new(raw.as_bytes(), 10);
+        assert_eq!(fixture.jump(), 0, "{}", fixture.core.last_error);
+        assert_eq!(&fixture.rows()[..3], ["$ command", "1", "2"]);
+        assert_eq!(
+            unsafe { nia_resize_fast(&mut fixture.core, fixture.session.as_ptr(), 25, 120) },
+            0
+        );
+        assert_eq!(&fixture.rows()[..3], ["$ command", "1", "2"]);
+        fixture.append(b"background output\r\n");
+        assert_eq!(&fixture.rows()[..3], ["$ command", "1", "2"]);
+        assert_eq!(
+            unsafe { nia_resize_fast(&mut fixture.core, fixture.session.as_ptr(), 4, 40) },
+            0
+        );
+        assert_eq!(&fixture.rows()[..3], ["$ command", "1", "2"]);
+    }
+
+    #[test]
+    fn recent_and_no_output_commands_remain_in_history_at_the_top() {
+        for output in ["", "result\r\n"] {
+            let raw = format!("$ command\r\n\x1b]133;C;1000.5\x07{output}");
+            let mut fixture = Fixture::new(raw.as_bytes(), 10);
+            assert_eq!(fixture.jump(), 0, "{}", fixture.core.last_error);
+            let rows = fixture.rows();
+            assert_eq!(rows[0], "$ command");
+            assert!(rows.last().unwrap().is_empty(), "pad below short history");
+            assert_eq!(fixture.screen()["cursor_visible"], false);
+            assert_ne!(fixture.screen()["scrollback_offset"], 0);
+            assert!(!rows.iter().any(|row| row.contains("LIVE END")));
+        }
+    }
+
+    #[test]
+    fn anchor_without_retained_command_text_is_an_error_not_a_successful_live_jump() {
+        let mut fixture = Fixture::new(b"\x1b]133;C;1000.5\x07", 10);
+        assert_eq!(fixture.jump(), -1);
+        assert!(fixture.core.last_error.contains("original command line"));
+        assert!(!fixture.core.disk_scroll.contains_key("test"));
+    }
+
+    #[test]
+    fn explicit_down_scroll_returns_to_live_and_clears_vt_scrollback() {
+        let mut fixture = Fixture::new(b"$ command\r\n\x1b]133;C;1000.5\x07result\r\n", 10);
+        fixture
+            .core
+            .live
+            .get_mut("test")
+            .unwrap()
+            .parser
+            .screen_mut()
+            .set_scrollback(5);
+        assert_eq!(fixture.jump(), 0);
+        assert_eq!(
+            unsafe { nia_scroll(&mut fixture.core, fixture.session.as_ptr(), -1) },
+            0
+        );
+        assert!(!fixture.core.disk_scroll.contains_key("test"));
+        assert_eq!(fixture.core.live["test"].parser.screen().scrollback(), 0);
+        assert!(fixture.rows().iter().any(|row| row.contains("LIVE END")));
+    }
+
+    #[test]
+    fn first_deep_scroll_repairs_legacy_history_and_restores_streaming_tail() {
+        let mut fixture =
+            Fixture::new(b"$ command\r\n\x1b]133;C;1000.5\x07result\r\npartial\r", 10);
+        fixture
+            .core
+            .live
+            .get_mut("test")
+            .unwrap()
+            .parser
+            .screen_mut()
+            .set_scrollback(usize::MAX);
+        assert_eq!(
+            unsafe { nia_scroll(&mut fixture.core, fixture.session.as_ptr(), 3) },
+            0
+        );
+        assert_eq!(fixture.rows()[0], "$ command");
+        fixture.append(b"\n");
+        assert_eq!(&fixture.rows()[..3], ["$ command", "result", "partial"]);
+    }
+
+    #[test]
+    fn new_session_history_before_first_output_is_harmless() {
+        let mut fixture = Fixture::fresh(10);
+        assert!(!fixture.core.store.log_path("test").exists());
+        assert_eq!(
+            unsafe { nia_scroll(&mut fixture.core, fixture.session.as_ptr(), 3) },
+            0
+        );
+        assert!(!fixture.core.disk_scroll.contains_key("test"));
+        assert_eq!(fixture.core.live["test"].parser.screen().scrollback(), 0);
+        assert_eq!(fixture.timeline(), serde_json::json!([]));
+        assert!(fixture.core.last_error.is_empty());
+        assert!(!fixture.core.store.log_path("test").exists());
+    }
+
+    #[test]
+    fn opening_timeline_recovers_missing_anchors_before_gating_view_output() {
+        let mut fixture = Fixture::with_log(
+            b"$ command\r\n\x1b]133;C;1000.5\x07result\r\npartial\r",
+            10,
+            false,
+        );
+        assert!(!fixture.core.store.recent_command_marks("test", 1).unwrap()[0].has_anchor);
+        let entries = fixture.timeline();
+        assert_eq!(entries[0]["has_anchor"], true);
+        assert_eq!(entries[0]["id"], fixture.mark_id);
+        assert_eq!(fixture.jump(), 0);
+        fixture.append(b"\n");
+        assert_eq!(&fixture.rows()[..3], ["$ command", "result", "partial"]);
+    }
+
+    #[test]
+    fn timeline_repair_error_preserves_command_metadata() {
+        let mut fixture = Fixture::new(b"$ command\r\n\x1b]133;C;1000.5\x07", 10);
+        std::fs::remove_file(fixture.core.store.log_path("test")).unwrap();
+        let entries = fixture.timeline();
+        assert_eq!(entries[0]["id"], fixture.mark_id);
+        assert_eq!(entries[0]["command"], "command");
+        assert_eq!(entries[0]["has_anchor"], true);
+        assert!(fixture
+            .core
+            .last_error
+            .contains("original terminal log is unavailable"));
+    }
 }
 
 #[cfg(test)]

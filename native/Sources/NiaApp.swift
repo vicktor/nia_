@@ -450,24 +450,33 @@ private extension FocusedValues {
     }
     func scroll(lines: Int, session id: String) {
         guard let handle, lines != 0 else { return }
-        _ = id.withCString { nia_scroll(handle, $0, Int32(clamping: lines)) }
+        guard report(id.withCString({ nia_scroll(handle, $0, Int32(clamping: lines)) })) else { return }
         refreshScreen(for: id)
     }
-    func resize(rows: Int, columns: Int, session id: String) {
-        guard let handle else { return }
-        let r = max(1, rows), c = max(1, columns)
-        if let prev = paneSizes[id], prev.rows == r && prev.columns == c { return }
-        paneSizes[id] = (r, c)
+    func resize(rows: Int, columns: Int, session id: String) -> Bool {
+        guard let handle else { return false }
+        let r = min(Int(UInt16.max), max(1, rows)), c = min(Int(UInt16.max), max(1, columns))
+        if let prev = paneSizes[id], prev.rows == r && prev.columns == c,
+           let screen = frames[id], Int(screen.rows) == r, Int(screen.cols) == c { return true }
         // Critical: inform the PTY of the real column count immediately.
         // Debouncing this call made new output wrap to the old width.
         let status = id.withCString {
             nia_resize_fast(handle, $0, UInt16(clamping: r), UInt16(clamping: c))
         }
-        if status != 0 { _ = report(status); return }
+        guard status == 0 else {
+            paneSizes.removeValue(forKey: id)
+            let message = NiaL10n.string(resultString(nia_last_error(handle)))
+            if error != message { error = message }
+            return false
+        }
+        // Cache only an acknowledged PTY resize, so an early failed attempt
+        // cannot suppress the first valid size for a newly opened session.
+        paneSizes[id] = (r, c)
         refreshScreen(for: id)
 
         // Do not replay the ANSI log over a live shell. Resize is immediate,
         // and applications redraw when notified by the PTY's SIGWINCH.
+        return true
     }
     private func prepareScreen(for id: String) {
         guard let handle else { return }
@@ -933,8 +942,9 @@ struct MainWindow: View {
                 onInput: { model.send($0, to: session) },
                 onResize: { r,c in model.resize(rows:r, columns:c, session:session) },
                 onScroll: { model.scroll(lines:$0, session:session) })
-                .frame(minWidth: 180, minHeight: 100)
+                .frame(minWidth: 180, maxWidth: .infinity, minHeight: 100, maxHeight: .infinity)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
     private func beginRename(_ item: SessionEntry) {
         editedTitle = item.display_name
@@ -1053,7 +1063,7 @@ private struct NiaCommandTimeline: View {
                                         .disabled(!mark.has_anchor)
                                         .help(mark.has_anchor
                                             ? "Ir al resultado de este comando"
-                                            : "Sin marca de navegación: vuelve a ejecutar el comando")
+                                            : "Esta ejecución no tiene marca de navegación")
                                         Button("Copiar") {
                                             NSPasteboard.general.clearContents()
                                             NSPasteboard.general.setString(mark.command, forType: .string)
