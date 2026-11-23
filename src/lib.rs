@@ -105,7 +105,8 @@ impl NiaCore {
                     Ok(()) => {
                         term.parser.process(&chunk);
                         let lines = term.history_indexer.ingest(&chunk);
-                        if let Err(e) = self.store.append_history_lines(id, &lines) {
+                        let anchors = term.history_indexer.take_anchors();
+                        if let Err(e) = self.store.append_history_lines(id, &lines, &anchors) {
                             self.last_error = format!("History index: {e}");
                         }
                     },
@@ -579,6 +580,34 @@ pub unsafe extern "C" fn nia_set_scrollback_limit(p: *mut NiaCore, lines: u32) -
 }
 
 /// Positive delta scrolls into older output; negative delta returns toward live output.
+/// Jump to the actual output of a completed command using its OSC 133
+/// anchor. Never executes the command or mutates the running shell.
+#[no_mangle]
+pub unsafe extern "C" fn nia_jump_to_command(
+    p: *mut NiaCore, session: *const c_char, command_id: i64
+) -> c_int {
+    if p.is_null() { return -1; }
+    let core = &mut *p;
+    let id = match text_arg(session) { Ok(value) => value, Err(e) => return core.set_error(e) };
+    let Some(term) = core.live.get(id) else { return core.set_error("Session is not running") };
+    let height = term.parser.screen().size().0.get() as u64;
+    match core.store.readable_lines_since_command(id, command_id) {
+        Ok(Some(lines_after)) => {
+            let total = core.store.history_visible_count(id).unwrap_or(0);
+            let max_offset = total.saturating_sub(height);
+            let offset = lines_after.saturating_sub(height).min(max_offset);
+            if offset > 0 {
+                core.disk_scroll.insert(id.to_string(), DiskScroll { offset, max_offset });
+            } else {
+                core.disk_scroll.remove(id);
+            }
+            0
+        },
+        Ok(None) => core.set_error("This command has no navigation marker (run it again in this version of nia_)"),
+        Err(e) => core.set_error(e),
+    }
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn nia_scroll(p: *mut NiaCore, name: *const c_char, delta: i32) -> c_int {
     if p.is_null() { return -1; }

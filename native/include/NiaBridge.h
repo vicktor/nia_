@@ -34,6 +34,7 @@ int32_t nia_reflow(void *core, const char *name);
 int32_t nia_set_session_color(void *core, const char *name, const char *color);
 int32_t nia_set_scrollback_limit(void *core, uint32_t lines);
 int32_t nia_scroll(void *core, const char *name, int32_t delta);
+int32_t nia_jump_to_command(void *core, const char *session, int64_t command_id);
 void nia_poll(void *core);
 char *nia_screen(void *core, const char *name);
 #ifdef __cplusplus

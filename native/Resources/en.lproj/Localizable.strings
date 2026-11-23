@@ -186,3 +186,6 @@
 "El nombre de la sesión no puede estar vacío." = "Session name cannot be empty.";
 "Another session already has that name" = "Another session already has that name";
 "Session name must be 1–96 bytes without slashes or controls" = "Session name must be 1–96 bytes without slashes or controls";
+"Ver salida" = "View output";
+"Ir al resultado de este comando" = "Jump to this command's output";
+"Sin marca de navegación: vuelve a ejecutar el comando" = "No navigation marker: run this command again";

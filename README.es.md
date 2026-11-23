@@ -63,6 +63,15 @@ En las sesiones Zsh locales, nia_ registra los **comandos completados** con fech
 - Si ejecutas `claude --resume <id>`, `codex resume <id>` o `gemini --resume <id>`, nia_ recuerda ese identificador mientras está activo y reutiliza el comando al recuperar la shell. Solo permite órdenes exactas y validadas; no ejecuta automáticamente comandos arbitrarios.
 - Para recuperar el agente deben estar instalados su CLI y los datos originales de su conversación. No se pueden identificar retroactivamente las conversaciones iniciadas **antes** de esta funcionalidad.
 
+## Navegación al resultado de comandos (v0.7.4)
+
+Zsh local emite una marca invisible **OSC 133** al iniciar cada comando. El indexador de historial registra en SQLite la línea real correspondiente. Abre el Historial de comandos (⌘⇧H) y pulsa **Ver salida** para saltar a la página del historial sin volver a ejecutar el comando. **Copiar** e **Insertar** siguen igual.
+
+- Sin demonios adicionales ni análisis continuo del renderizado: las marcas se procesan al recibir los bytes ANSI.
+- Los comandos anteriores a esta versión no tienen marca; **Ver salida** solo se habilita al ejecutar comandos con los hooks actualizados.
+- La navegación usa el scrollback textual indexado: una TUI a pantalla completa no puede reconstruirse píxel a píxel desde texto plano.
+- La PTY, Zsh, recuperación de agentes y barra superior no cambian.
+
 ## Características
 
 | Área | Funcionalidades actuales | Limitaciones |

@@ -20,6 +20,7 @@ pub struct CommandMark {
     pub cwd: String,
     pub command: String,
     pub repeat_count: i64,
+    pub has_anchor: bool,
 }
 
 pub struct Store {
@@ -74,6 +75,12 @@ impl Store {
             );
             CREATE INDEX IF NOT EXISTS command_marks_recent
               ON command_marks(session_id, id DESC);
+            CREATE TABLE IF NOT EXISTS command_anchors (
+              session_id TEXT NOT NULL,
+              started_at REAL NOT NULL,
+              line_no INTEGER NOT NULL,
+              PRIMARY KEY(session_id, started_at)
+            ) WITHOUT ROWID;
             CREATE TABLE IF NOT EXISTS preferences (
               key TEXT PRIMARY KEY, value TEXT NOT NULL
             );
@@ -337,23 +344,39 @@ impl Store {
     /// Return one row per exact command for this session. The representative
     /// row is always the most recent execution; older executions contribute
     /// only to repeat_count. This is an on-demand query, never a poll task.
+    /// One row per command text, using its latest execution. Anchors are
+    /// explicit OSC 133 events, not guesses derived from matching output.
     pub fn recent_command_marks(&self, session: &str, limit: usize) -> Result<Vec<CommandMark>> {
         let mut statement = self.conn.prepare(
-            "WITH ranked AS (                 SELECT id, started_at, duration_ms, exit_code, cwd, command,                        ROW_NUMBER() OVER (PARTITION BY command ORDER BY id DESC) AS rn,                        COUNT(*) OVER (PARTITION BY command) AS repeat_count                 FROM command_marks WHERE session_id=?1              )              SELECT id, started_at, duration_ms, exit_code, cwd, command, repeat_count              FROM ranked WHERE rn=1 ORDER BY id DESC LIMIT ?2"
+            "WITH ranked AS (
+                SELECT id, started_at, duration_ms, exit_code, cwd, command,
+                       ROW_NUMBER() OVER (PARTITION BY command ORDER BY id DESC) AS rn,
+                       COUNT(*) OVER (PARTITION BY command) AS repeat_count
+                FROM command_marks WHERE session_id=?1
+             )
+             SELECT r.id, r.started_at, r.duration_ms, r.exit_code, r.cwd,
+                    r.command, r.repeat_count, (a.line_no IS NOT NULL)
+             FROM ranked r LEFT JOIN command_anchors a
+                 ON a.session_id=?1 AND a.started_at=r.started_at
+             WHERE r.rn=1 ORDER BY r.id DESC LIMIT ?2"
         )?;
         let rows = statement.query_map(params![session, limit.min(250) as i64], |row| {
             Ok(CommandMark {
                 id: row.get(0)?, started_at: row.get(1)?,
                 duration_ms: row.get(2)?, exit_code: row.get(3)?,
                 cwd: row.get(4)?, command: row.get(5)?,
-                repeat_count: row.get(6)?,
+                repeat_count: row.get(6)?, has_anchor: row.get::<_,i64>(7)? != 0,
             })
         })?;
         rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
     }
 
-    pub fn append_history_lines(&mut self, id: &str, lines: &[String]) -> Result<()> {
-        if lines.is_empty() { return Ok(()); }
+    /// Anchor position is the absolute raw history line number. We commit
+    /// emitted lines and anchors in the same transaction so a crash cannot
+    /// make the two disagree.
+    pub fn append_history_lines(&mut self, id: &str, lines: &[String],
+        anchors: &[(f64, usize)]) -> Result<()> {
+        if lines.is_empty() && anchors.is_empty() { return Ok(()); }
         let tx = self.conn.transaction()?;
         tx.execute("INSERT INTO history_counters(session_id,next_line) VALUES (?1,0) ON CONFLICT(session_id) DO NOTHING", [id])?;
         let next: i64 = tx.query_row("SELECT next_line FROM history_counters WHERE session_id=?1",[id],|r|r.get(0))?;
@@ -361,9 +384,35 @@ impl Store {
             let mut stmt = tx.prepare("INSERT INTO history_lines(session_id,line_no,text) VALUES(?1,?2,?3)")?;
             for (i,line) in lines.iter().enumerate() { stmt.execute(params![id,next+i as i64,line])?; }
         }
+        {
+            let mut stmt = tx.prepare(
+                "INSERT OR IGNORE INTO command_anchors(session_id,started_at,line_no) VALUES (?1,?2,?3)"
+            )?;
+            for (started,offset) in anchors {
+                stmt.execute(params![id, started, next + *offset as i64])?;
+            }
+        }
         tx.execute("UPDATE history_counters SET next_line=?2 WHERE session_id=?1", params![id,next+lines.len() as i64])?;
         tx.commit()?;
         Ok(())
+    }
+
+    /// Count readable lines AFTER an explicit marker; its output can be
+    /// positioned at the top of a viewport by paging back from the end.
+    pub fn readable_lines_since_command(&self, session: &str, mark_id: i64) -> Result<Option<u64>> {
+        let line: Option<i64> = self.conn.query_row(
+            "SELECT a.line_no FROM command_marks m
+             JOIN command_anchors a ON a.session_id=m.session_id AND a.started_at=m.started_at
+             WHERE m.session_id=?1 AND m.id=?2",
+            params![session,mark_id], |r| r.get(0)
+        ).optional()?;
+        let Some(line) = line else { return Ok(None) };
+        let count: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM history_lines
+             WHERE session_id=?1 AND line_no>=?2 AND TRIM(text)<>''",
+            params![session,line], |r| r.get(0)
+        )?;
+        Ok(Some(count.max(0) as u64))
     }
 
     /// Count non-empty transcript lines, excluding terminal progress/blank-only rows.
