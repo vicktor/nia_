@@ -139,3 +139,8 @@
 "Generar MD5 aleatorio" = "Generate random MD5";
 "Generar contraseña segura (18 caracteres)" = "Generate secure password (18 characters)";
 "El motor interno no está disponible." = "The internal engine is unavailable.";
+"Idioma" = "Language";
+"Automático (macOS)" = "Automatic (macOS)";
+"English" = "English";
+"Español" = "Spanish";
+"Source / Código: github.com/vicktor/nia_ · MPL-2.0" = "Source / Code: github.com/vicktor/nia_ · MPL-2.0";
