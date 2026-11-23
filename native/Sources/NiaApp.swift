@@ -639,9 +639,12 @@ struct MainWindow: View {
                         description: Text("Crea una sesión o abre una sesión guardada."))
                 }
             }
-            .background(Color.clear)
+            // A fresh Cmd+N window has no terminal drawable yet. Keep its
+            // empty detail opaque, regardless of the saved terminal opacity.
+            .background(model.selected == nil
+                ? Color(nsColor: .textBackgroundColor) : Color.clear)
         }
-        .background(NiaWindowTransparency(opacity: terminalOpacity))
+        .background(NiaWindowTransparency(opacity: model.selected == nil ? 1.0 : terminalOpacity))
         .navigationTitle(model.selected ?? "nia_")
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
