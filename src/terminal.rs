@@ -119,15 +119,15 @@ impl LiveTerminal {
 
     /// Permit exactly one exit from the normal ZLE accept-line widget.
     pub fn approve_exit(&mut self) -> Result<()> {
-        let approval = self.exit_approval_path.as_ref()
+        let approval = self.exit_approval_path.clone()
             .context("Exit interception is only supported in local Zsh")?;
-        fs::write(approval, b"approved")?;
+        fs::write(&approval, b"approved")?;
         #[cfg(unix)] {
             use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(approval, fs::Permissions::from_mode(0o600))?;
+            fs::set_permissions(&approval, fs::Permissions::from_mode(0o600))?;
         }
         if let Err(e) = self.send(b"exit\r") {
-            let _ = fs::remove_file(approval);
+            let _ = fs::remove_file(&approval);
             return Err(e);
         }
         Ok(())
