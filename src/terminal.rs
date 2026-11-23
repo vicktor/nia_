@@ -133,7 +133,7 @@ impl LiveTerminal {
         let mut consumed = 0;
         loop {
             let body = &self.marks_buffer[consumed..];
-            let kind = match body.first() { Some(b'S') => b'S', Some(b'E') => b'E', _ => break };
+            let kind = match body.first() { Some(&b'S') => b'S', Some(&b'E') => b'E', _ => break };
             if body.get(1) != Some(&0) { break }
             let needed = if kind == b'S' { 3 } else { 2 };
             let mut cursor = 2;
