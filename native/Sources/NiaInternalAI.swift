@@ -15,7 +15,7 @@ import AppKit
     @Published var isDownloading = false
     @Published var progress = 0.0
     @Published var isReady = false
-    @Published var status = "No descargado"
+    @Published var status = NSLocalizedString("No descargado", comment: "")
     @Published var failure: String?
 
     private var process: Process?
@@ -24,7 +24,7 @@ import AppKit
     private var stopObserver: NSObjectProtocol?
     private init() {
         isReady = FileManager.default.fileExists(atPath: modelPath.path)
-        status = isReady ? "Modelo instalado" : "No descargado"
+        status = NSLocalizedString(isReady ? "Modelo instalado" : "No descargado", comment: "")
         stopObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.willTerminateNotification, object: nil, queue: .main
         ) { _ in
@@ -44,7 +44,7 @@ import AppKit
         isDownloading = true
         progress = 0
         failure = nil
-        status = "Descargando modelo…"
+        status = NSLocalizedString("Descargando modelo…", comment: "")
         defer { isDownloading = false }
         do {
             let directory = modelPath.deletingLastPathComponent()
@@ -54,18 +54,18 @@ import AppKit
             }
             let (temporaryURL, response) = try await URLSession.shared.download(from: Self.modelURL, delegate: delegate)
             guard let response = response as? HTTPURLResponse, response.statusCode == 200 else {
-                throw NiaLocalError.message("Error HTTP al descargar el modelo.")
+                throw NiaLocalError.message(NSLocalizedString("Error HTTP al descargar el modelo.", comment: ""))
             }
             let attrs = try FileManager.default.attributesOfItem(atPath: temporaryURL.path)
             let bytes = (attrs[.size] as? NSNumber)?.int64Value ?? 0
             guard bytes > 300_000_000 && bytes < 600_000_000 else {
-                throw NiaLocalError.message("Tamaño de archivo GGUF inesperado.")
+                throw NiaLocalError.message(NSLocalizedString("Tamaño de archivo GGUF inesperado.", comment: ""))
             }
             let f = try FileHandle(forReadingFrom: temporaryURL)
             let header = try f.read(upToCount: 4)
             try f.close()
             guard header == Data([0x47, 0x47, 0x55, 0x46]) else {
-                throw NiaLocalError.message("El archivo descargado no parece un GGUF válido.")
+                throw NiaLocalError.message(NSLocalizedString("El archivo descargado no parece un GGUF válido.", comment: ""))
             }
             let pending = directory.appendingPathComponent(Self.modelFilename + ".pending")
             try? FileManager.default.removeItem(at: pending)
@@ -73,11 +73,11 @@ import AppKit
             try? FileManager.default.removeItem(at: modelPath)
             try FileManager.default.moveItem(at: pending, to: modelPath)
             isReady = true
-            status = "Modelo instalado · \(Int(bytes / 1_000_000)) MB"
+            status = String(format: NSLocalizedString("Modelo instalado · %d MB", comment: ""), Int(bytes / 1_000_000))
             progress = 1
         } catch {
             failure = error.localizedDescription
-            status = "No disponible"
+            status = NSLocalizedString("No disponible", comment: "")
         }
     }
 
@@ -86,7 +86,7 @@ import AppKit
         do {
             try FileManager.default.removeItem(at: modelPath)
             isReady = false
-            status = "No descargado"
+            status = NSLocalizedString("No descargado", comment: "")
         } catch { failure = error.localizedDescription }
     }
 
@@ -94,12 +94,12 @@ import AppKit
         URL(string: "http://127.0.0.1:\(Self.port)")!
     }
     private func ensureServer() async throws {
-        guard modelIsInstalled else { throw NiaLocalError.message("Descarga el modelo desde Preferencias → IA.") }
+        guard modelIsInstalled else { throw NiaLocalError.message(NSLocalizedString("Descarga el modelo desde Preferencias → IA.", comment: "")) }
         if process?.isRunning == true { return }
         guard let binary = Bundle.main.executableURL?.deletingLastPathComponent()
                 .appendingPathComponent("nia-llama-server"),
               FileManager.default.isExecutableFile(atPath: binary.path) else {
-            throw NiaLocalError.message("No se encuentra el motor local. Reconstruye Nia.app con CMake instalado.")
+            throw NiaLocalError.message(NSLocalizedString("No se encuentra el motor local. Reconstruye Nia.app con CMake instalado.", comment: ""))
         }
         let p = Process()
         p.executableURL = binary
@@ -109,30 +109,30 @@ import AppKit
                        "--parallel", "1", "--no-webui", "--api-key", secret]
         p.standardOutput = FileHandle.nullDevice
         p.standardError = FileHandle.nullDevice
-        do { try p.run() } catch { throw NiaLocalError.message("No se pudo iniciar el motor local: \(error.localizedDescription)") }
+        do { try p.run() } catch { throw NiaLocalError.message(String(format: NSLocalizedString("No se pudo iniciar el motor local: %@", comment: ""), error.localizedDescription)) }
         process = p
-        status = "Iniciando motor Metal…"
+        status = NSLocalizedString("Iniciando motor Metal…", comment: "")
         for _ in 0..<100 {
-            if !p.isRunning { process = nil; throw NiaLocalError.message("El motor local terminó inesperadamente.") }
+            if !p.isRunning { process = nil; throw NiaLocalError.message(NSLocalizedString("El motor local terminó inesperadamente.", comment: "")) }
             var request = URLRequest(url: serverURL.appendingPathComponent("health"))
             request.timeoutInterval = 1
             request.setValue("Bearer \(secret)", forHTTPHeaderField: "Authorization")
             if let (_, response) = try? await URLSession.shared.data(for: request),
                let http = response as? HTTPURLResponse, http.statusCode == 200 {
-                status = "Motor activo · Metal"
+                status = NSLocalizedString("Motor activo · Metal", comment: "")
                 return
             }
             try await Task.sleep(nanoseconds: 200_000_000)
         }
         stop()
-        throw NiaLocalError.message("El motor local no ha arrancado. Comprueba el build de llama.cpp.")
+        throw NiaLocalError.message(NSLocalizedString("El motor local no ha arrancado. Comprueba el build de llama.cpp.", comment: ""))
     }
     func stop() {
         idleTask?.cancel()
         idleTask = nil
         if let p = process, p.isRunning { p.terminate() }
         process = nil
-        status = modelIsInstalled ? "Modelo instalado (sin cargar)" : "No descargado"
+        status = NSLocalizedString(modelIsInstalled ? "Modelo instalado (sin cargar)" : "No descargado", comment: "")
     }
     private func scheduleIdleStop() {
         idleTask?.cancel()
@@ -163,13 +163,13 @@ import AppKit
         ])
         let (data, raw) = try await URLSession.shared.data(for: request)
         guard let http = raw as? HTTPURLResponse, http.statusCode == 200 else {
-            throw NiaLocalError.message("El motor interno devolvió un error HTTP.")
+            throw NiaLocalError.message(NSLocalizedString("El motor interno devolvió un error HTTP.", comment: ""))
         }
         let response = try JSONDecoder().decode(NiaLocalChatResponse.self, from: data)
         guard let command = response.choices.first?.message.content?.trimmingCharacters(in: .whitespacesAndNewlines),
               !command.isEmpty, command != "NO_COMMAND", command.count < 4000,
               !command.contains("\n"), !command.contains("\r"), !command.contains("```") else {
-            throw NiaLocalError.message("El modelo no devolvió un comando válido de una línea.")
+            throw NiaLocalError.message(NSLocalizedString("El modelo no devolvió un comando válido de una línea.", comment: ""))
         }
         return command
     }
@@ -219,7 +219,7 @@ struct NiaInternalAISettings: View {
                 } else {
                     Button("Descargar modelo") { Task { await engine.download() } }
                         .disabled(engine.isDownloading)
-                    Text(engine.isDownloading ? "Descargando…" : "Solo se descarga cuando lo solicitas")
+                    Text(LocalizedStringKey(engine.isDownloading ? "Descargando…" : "Solo se descarga cuando lo solicitas"))
                         .foregroundStyle(.secondary)
                 }
             }
