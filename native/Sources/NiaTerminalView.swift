@@ -376,6 +376,72 @@ final class NiaMetalView: MTKView, MTKViewDelegate {
             CharacterSet.alphanumerics.contains(scalar) || scalar == "_"
         }
     }
+    // Smart links: only inspect the clicked visible row, never scan scrollback
+    // on a render tick. This adds no background worker and no allocations on
+    // the steady-state Metal drawing path.
+    private static let webLinkPattern = try! NSRegularExpression(
+        pattern: #"https?://[^\\s<>\\\"']+"#,
+        options: [.caseInsensitive]
+    )
+    private var contextualURL: URL?
+
+    private func webURL(at location: (Int, Int)) -> URL? {
+        guard let frame = terminalFrame,
+              frame.cells.indices.contains(location.0),
+              frame.cells[location.0].indices.contains(location.1) else { return nil }
+        let cells = frame.cells[location.0]
+        // Build a mapping from UTF-16 offsets to actual terminal columns.
+        // Wide glyph continuation cells don't occupy text space.
+        var value = ""
+        var columns: [Int] = []
+        for (column, cell) in cells.enumerated() {
+            if cell.continuation { continue }
+            let glyph = cell.t.isEmpty ? " " : cell.t
+            value += glyph
+            for _ in glyph.utf16 { columns.append(column) }
+        }
+        let ns = value as NSString
+        guard ns.length > 0 else { return nil }
+        let matches = Self.webLinkPattern.matches(
+            in: value, range: NSRange(location: 0, length: ns.length)
+        )
+        for match in matches {
+            let first = match.range.location
+            let last = first + match.range.length
+            guard first < columns.count, last <= columns.count,
+                  columns[first] <= location.1,
+                  location.1 <= columns[last - 1] else { continue }
+            // Punctuation commonly follows terminal links but isn't part of URL.
+            var candidate = ns.substring(with: match.range)
+            while let lastChar = candidate.last, ".,;:!?)]}".contains(lastChar) {
+                candidate.removeLast()
+            }
+            guard candidate.count <= 2048,
+                  let url = URL(string: candidate),
+                  let scheme = url.scheme?.lowercased(),
+                  scheme == "http" || scheme == "https",
+                  let host = url.host, !host.isEmpty,
+                  url.user == nil, url.password == nil else { return nil }
+            // Ensure click wasn't on the stripped trailing punctuation.
+            let actualEnd = first + (candidate as NSString).length
+            if actualEnd <= columns.count && location.1 > columns[actualEnd - 1] {
+                return nil
+            }
+            return url
+        }
+        return nil
+    }
+
+    @objc private func openContextURL(_ sender: Any?) {
+        if let url = contextualURL { NSWorkspace.shared.open(url) }
+    }
+
+    @objc private func copyContextURL(_ sender: Any?) {
+        guard let url = contextualURL else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(url.absoluteString, forType: .string)
+    }
+
     private func selectWord(at location: (Int, Int)) {
         guard let f = terminalFrame, f.cells.indices.contains(location.0),
               f.cells[location.0].indices.contains(location.1) else { return }
@@ -458,6 +524,13 @@ final class NiaMetalView: MTKView, MTKViewDelegate {
         window?.makeFirstResponder(self)
         onFocus?()
         let point = convert(event.locationInWindow, from: nil)
+        // Explicit Cmd-click opens HTTP(S) links without touching the PTY.
+        if event.modifierFlags.contains(.command),
+           let url = webURL(at: cell(at: point)) {
+            NSWorkspace.shared.open(url)
+            mouseDownPoint = nil
+            return
+        }
         mouseDownPoint = point
         selectionStart = nil
         selectionEnd = nil
@@ -633,7 +706,17 @@ final class NiaMetalView: MTKView, MTKViewDelegate {
     override func menu(for event: NSEvent) -> NSMenu? {
         window?.makeFirstResponder(self)
         onFocus?()
-        let menu = NSMenu(title: "Insertar en terminal")
+        let menu = NSMenu(title: NiaL10n.string("Insertar en terminal"))
+        contextualURL = webURL(at: cell(at: convert(event.locationInWindow, from: nil)))
+        if contextualURL != nil {
+            let open = NSMenuItem(title: NiaL10n.string("Abrir enlace"), action: #selector(openContextURL(_:)), keyEquivalent: "")
+            open.target = self
+            menu.addItem(open)
+            let copy = NSMenuItem(title: NiaL10n.string("Copiar enlace"), action: #selector(copyContextURL(_:)), keyEquivalent: "")
+            copy.target = self
+            menu.addItem(copy)
+            menu.addItem(.separator())
+        }
         func item(_ title: String, _ action: Selector) {
             let entry = NSMenuItem(title: NiaL10n.string(title), action: action, keyEquivalent: "")
             entry.target = self
