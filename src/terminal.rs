@@ -45,6 +45,15 @@ impl LiveTerminal {
         } else {
             CommandBuilder::new(shell.as_str())
         };
+        // Advertise ANSI 256-color and truecolor support to local programs.
+        // Without an explicit TERM, a GUI-launched app may inherit "dumb"
+        // or an unrelated terminal definition; interactive TUIs then disable
+        // their color output before it ever reaches the Metal renderer.
+        // The remote SSH path keeps its own terminal negotiation.
+        if remote_host.is_none() {
+            command.env("TERM", "xterm-256color");
+            command.env("COLORTERM", "truecolor");
+        }
         // Zsh reads its history at shell startup. Install a per-session startup
         // directory that sources the user's configuration, then overrides HISTFILE.
         if remote_host.is_some() {
