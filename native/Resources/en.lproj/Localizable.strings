@@ -179,3 +179,5 @@
 "Copiar" = "Copy";
 "Insertar" = "Insert";
 "Los comandos pueden contener datos sensibles. El historial se guarda localmente en SQLite." = "Commands may contain sensitive information. Timeline data is stored locally in SQLite.";
+"No hay coincidencias" = "No matches";
+"No se ha encontrado ningún comando que coincida con tu búsqueda." = "No commands match your search.";

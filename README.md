@@ -44,6 +44,10 @@ In the visible terminal output, **⌘-click** a detected HTTP/HTTPS URL to open 
 
 ## Command timeline (iTerm2-inspired, lightweight)
 
+The top toolbar now also includes a **Command timeline** button. Commands that were executed more than once appear only once, showing the latest execution and a **×N** repeat counter. Search results and empty states keep the dialog header, search box and footer fixed. When no command matches a query, the panel shows **No matches** instead of the generic empty-history message.
+
+
+
 In a local Zsh session, nia_ records **completed commands** together with their start time, working directory, duration, and exit code. Open the timeline with **⌘⇧H** for the focused session or **right-click a session → Command timeline**. Search by command or directory; copy a command or insert it into the terminal without executing it.
 
 - Uses built-in Zsh `preexec`/`precmd` hooks and an indexed SQLite table. No daemon, model, or periodic terminal text parsing.

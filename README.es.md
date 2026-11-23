@@ -44,6 +44,10 @@ En el terminal, haz **⌘+clic** sobre una URL HTTP/HTTPS para abrirla en el nav
 
 ## Historial de comandos (inspirado en iTerm2, ligero)
 
+La barra superior incluye un botón de **Historial de comandos**. Un mismo comando ejecutado varias veces aparece una sola vez, con los datos de la ejecución más reciente y un contador **×N**. La búsqueda conserva fijos el encabezado, el buscador y el pie. Cuando no hay coincidencias muestra **No hay coincidencias**, diferente del estado sin historial.
+
+
+
 En las sesiones Zsh locales, nia_ registra los **comandos completados** con fecha de inicio, directorio, duración y código de salida. Abre el historial mediante **⌘⇧H** en la sesión activa o **clic derecho en una sesión → Historial de comandos**. Puedes buscar por comando o directorio, copiar o insertar en la terminal sin ejecutarlo.
 
 - Aprovecha hooks internos `preexec`/`precmd` de Zsh y una tabla SQLite indexada. No hay demonios, modelos ni análisis periódico del texto del terminal.
