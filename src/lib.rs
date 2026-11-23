@@ -77,9 +77,19 @@ impl NiaCore {
                 }
             }
             let mut chunk = Vec::new();
-            while let Ok(bytes) = term.rx.try_recv() {
-                chunk.extend_from_slice(&bytes);
-                if chunk.len() >= 128 * 1024 { break; }
+            let mut reader_drained = false;
+            loop {
+                match term.rx.try_recv() {
+                    Ok(bytes) => {
+                        chunk.extend_from_slice(&bytes);
+                        if chunk.len() >= 128 * 1024 { break; }
+                    },
+                    Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                        reader_drained = true;
+                        break;
+                    },
+                }
             }
             if !chunk.is_empty() {
                 match self.store.log_file(id).and_then(|mut f| Store::append_and_sync(&mut f, &chunk)) {
@@ -95,9 +105,9 @@ impl NiaCore {
             }
             // A process that has actually exited cannot be vetoed. Wait a few
             // polling cycles to flush its last PTY output before archiving.
-            if self.store.remote_host(id).ok().flatten().is_none() {
+            if reader_drained && self.store.remote_host(id).ok().flatten().is_none() {
                 match term._child.try_wait() {
-                    Ok(Some(_)) => term.exit_observed_polls = term.exit_observed_polls.saturating_add(1),
+                    Ok(Some(_)) => term.exit_observed_polls = 3,
                     Ok(None) => term.exit_observed_polls = 0,
                     Err(error) => self.last_error = format!("PTY wait: {error}"),
                 }
