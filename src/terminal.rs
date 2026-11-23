@@ -15,7 +15,7 @@ pub struct LiveTerminal {
     exit_request_path: Option<PathBuf>,
     exit_approval_path: Option<PathBuf>,
     pub exit_observed_polls: u8,
-    marks_path: Option<PathBuf>,
+    marks_file: Option<File>,
     marks_offset: u64,
     marks_buffer: Vec<u8>,
     pending_mark: Option<(f64, String, String)>,
@@ -89,18 +89,20 @@ impl LiveTerminal {
         let exit_request_path = ai_request_path.as_ref().map(|_| session_base(&record.id).map(|p| p.join("exit-request"))).transpose()?;
         let exit_approval_path = ai_request_path.as_ref().map(|_| session_base(&record.id).map(|p| p.join("exit-approved"))).transpose()?;
         // Only local Zsh uses the zero-extra-process command metadata hooks.
-        let marks_path = ai_request_path.as_ref().map(|_| session_base(&record.id).map(|p| p.join("command-marks"))).transpose()?;
-        // Each newly spawned shell begins with a new journal. Completed marks
-        // have already been persisted in SQLite by the preceding Nia process.
-        if let Some(path) = &marks_path {
-            let file = fs::OpenOptions::new().write(true).create(true).truncate(true).open(path)?;
+        // Keep one read handle open for the PTY lifetime to avoid repeated
+        // open/close operations while polling many sessions.
+        let marks_file = if ai_request_path.is_some() {
+            let path = session_base(&record.id)?.join("command-marks");
+            let file = fs::OpenOptions::new().read(true).write(true)
+                .create(true).truncate(true).open(path)?;
             #[cfg(unix)] {
                 use std::os::unix::fs::PermissionsExt;
                 file.set_permissions(fs::Permissions::from_mode(0o600))?;
             }
-        }
+            Some(file)
+        } else { None };
         Ok(Self { state_path, ai_request_path, exit_request_path, exit_approval_path, exit_observed_polls: 0,
-            marks_path, marks_offset: 0, marks_buffer: Vec::new(), pending_mark: None,
+            marks_file, marks_offset: 0, marks_buffer: Vec::new(), pending_mark: None,
             history_indexer: HistoryIndexer::default(), parser: vt100::Parser::new(NonZeroU16::new(rows).unwrap(), NonZeroU16::new(cols).unwrap(), scrollback_lines),
             input: writer, master: pair.master, rx, _child: child })
     }
@@ -109,12 +111,7 @@ impl LiveTerminal {
     /// Zsh builtins and write NUL-framed values to avoid delimiter injections.
     /// No command data is parsed during terminal drawing.
     pub fn take_command_marks(&mut self) -> Result<Vec<(f64, i64, i64, String, String)>> {
-        let Some(path) = &self.marks_path else { return Ok(Vec::new()) };
-        let mut file = match File::open(path) {
-            Ok(file) => file,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-            Err(e) => return Err(e.into()),
-        };
+        let Some(file) = self.marks_file.as_mut() else { return Ok(Vec::new()) };
         let len = file.metadata()?.len();
         if len < self.marks_offset {
             self.marks_offset = 0;
