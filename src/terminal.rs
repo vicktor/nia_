@@ -308,7 +308,6 @@ fn prepare_zsh_history(id: &str) -> Result<PathBuf> {
           command mv -f -- \"$tmp\" {2}\n\
         }}\n\
         autoload -Uz add-zsh-hook\n\
-        add-zsh-hook precmd _ember_capture_state\n\
         # Command timeline: built-in Zsh hooks, no subprocess or prompt edits.\n\
         zmodload zsh/datetime 2>/dev/null\n\
         function _nia_mark_start() {{\n\
@@ -319,7 +318,10 @@ fn prepare_zsh_history(id: &str) -> Result<PathBuf> {
           builtin printf 'E\\0%s\\0%s\\0' "$EPOCHREALTIME" "$exit_status" >> {6}\n\
         }}\n\
         add-zsh-hook preexec _nia_mark_start\n\
+        # Register the completion hook first: subsequent state hooks may\n\
+        # overwrite $? and would corrupt the command's exit status.\n\
         add-zsh-hook precmd _nia_mark_end\n\
+        add-zsh-hook precmd _ember_capture_state\n\
         # Nia AI: intercept only a ZLE command line that starts with ?.\n\
         # The question never reaches the shell execution path or HISTFILE.\n\
         function _nia_ai_accept_line() {{\n\
