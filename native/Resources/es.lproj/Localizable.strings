@@ -186,3 +186,6 @@
 "El nombre de la sesión no puede estar vacío." = "El nombre de la sesión no puede estar vacío.";
 "Another session already has that name" = "Ya existe otra sesión con ese nombre";
 "Session name must be 1–96 bytes without slashes or controls" = "El nombre debe tener entre 1 y 96 bytes, sin barras ni controles";
+"Ver salida" = "Ver salida";
+"Ir al resultado de este comando" = "Ir al resultado de este comando";
+"Sin marca de navegación: vuelve a ejecutar el comando" = "Sin marca de navegación: vuelve a ejecutar el comando";
