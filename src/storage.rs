@@ -11,6 +11,16 @@ pub struct SessionRecord {
     pub closed: bool,
 }
 
+#[derive(Debug, serde::Serialize)]
+pub struct CommandMark {
+    pub id: i64,
+    pub started_at: f64,
+    pub duration_ms: i64,
+    pub exit_code: i64,
+    pub cwd: String,
+    pub command: String,
+}
+
 pub struct Store {
     conn: Connection,
     home: PathBuf,
@@ -46,6 +56,17 @@ impl Store {
               session_id TEXT PRIMARY KEY,
               next_line INTEGER NOT NULL DEFAULT 0
             );
+            CREATE TABLE IF NOT EXISTS command_marks (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              session_id TEXT NOT NULL,
+              started_at REAL NOT NULL,
+              duration_ms INTEGER NOT NULL,
+              exit_code INTEGER NOT NULL,
+              cwd TEXT NOT NULL,
+              command TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS command_marks_recent
+              ON command_marks(session_id, id DESC);
             CREATE TABLE IF NOT EXISTS preferences (
               key TEXT PRIMARY KEY, value TEXT NOT NULL
             );
@@ -259,6 +280,37 @@ impl Store {
     // per-session line_no paging uses the index instead of OFFSET and does not load the
     // entire transcript into memory. Output may contain secrets: treat this DB
     // as confidential, just as the raw log is.
+    /// Completed command metadata, indexed separately from VT and shell history.
+    pub fn append_command_marks(&mut self, session: &str,
+        entries: &[(f64, i64, i64, String, String)]) -> Result<()> {
+        if entries.is_empty() { return Ok(()) }
+        let tx = self.conn.transaction()?;
+        {
+            let mut insert = tx.prepare(
+                "INSERT INTO command_marks(session_id, started_at, duration_ms, exit_code, cwd, command)                  VALUES(?1, ?2, ?3, ?4, ?5, ?6)"
+            )?;
+            for (started, duration, exit, cwd, command) in entries {
+                insert.execute(params![session, started, duration, exit, cwd, command])?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn recent_command_marks(&self, session: &str, limit: usize) -> Result<Vec<CommandMark>> {
+        let mut statement = self.conn.prepare(
+            "SELECT id, started_at, duration_ms, exit_code, cwd, command              FROM command_marks WHERE session_id=?1 ORDER BY id DESC LIMIT ?2"
+        )?;
+        let rows = statement.query_map(params![session, limit.min(250) as i64], |row| {
+            Ok(CommandMark {
+                id: row.get(0)?, started_at: row.get(1)?,
+                duration_ms: row.get(2)?, exit_code: row.get(3)?,
+                cwd: row.get(4)?, command: row.get(5)?
+            })
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
+    }
+
     pub fn append_history_lines(&mut self, id: &str, lines: &[String]) -> Result<()> {
         if lines.is_empty() { return Ok(()); }
         let tx = self.conn.transaction()?;
