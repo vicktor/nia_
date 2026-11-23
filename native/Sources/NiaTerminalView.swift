@@ -318,7 +318,7 @@ final class NiaMetalView: MTKView, MTKViewDelegate {
         needsDisplay = true
     }
     override func layout() { super.layout(); reportSize() }
-    private func reportSize() {
+    func reportSize() {
         let scale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
         let size = [max(1, Int(bounds.height * scale / cellHeight)),
                     max(1, Int(bounds.width * scale / cellWidth))]
@@ -896,6 +896,11 @@ struct TerminalPanel: NSViewRepresentable {
         view.copyOnSelection = defaults.object(forKey:"nia.copyOnSelect") as? Bool ?? true
         view.fontName = fontName
         view.fontSize = CGFloat(fontSize)
+        // SwiftUI may attach a resized Metal view without calling AppKit's
+        // layout() after the callback has been installed. Revalidate rows
+        // against its actual bounds on every update (reportSize deduplicates).
+        // This keeps the PTY tall enough to reach the bottom of the panel.
+        view.reportSize()
         // Rendering is triggered by a changed snapshot or cursor timer.
     }
 }
