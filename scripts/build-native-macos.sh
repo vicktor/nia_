@@ -76,7 +76,7 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
   <key>CFBundleExecutable</key><string>nia</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleIconFile</key><string>nia_.icns</string>
-  <key>CFBundleShortVersionString</key><string>0.7.0</string>
+  <key>CFBundleShortVersionString</key><string>0.7.1</string>
   <key>CFBundleVersion</key><string>1</string>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>NSHighResolutionCapable</key><true/>
@@ -97,6 +97,7 @@ iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/nia_.icns"
 for language in en es; do
     mkdir -p "$APP/Contents/Resources/$language.lproj"
     cp "$ROOT/native/Resources/$language.lproj/Localizable.strings" "$APP/Contents/Resources/$language.lproj/"
+    plutil -lint "$APP/Contents/Resources/$language.lproj/Localizable.strings"
 done
 rm -rf "$(dirname "$ICONSET")"
 plutil -lint "$APP/Contents/Info.plist"
