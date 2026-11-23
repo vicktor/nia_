@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
-use std::{fs::{self, File, OpenOptions}, io::{Read, Write}, path::PathBuf};
+use std::{fs::{self, File, OpenOptions}, io::Write, path::PathBuf};
 
 #[derive(Debug, Clone)]
 pub struct SessionRecord {
@@ -260,21 +260,6 @@ impl Store {
 
     pub fn log_file(&self, id: &str) -> Result<File> {
         Ok(OpenOptions::new().create(true).append(true).open(self.log_path(id))?)
-    }
-
-    /// Reconstruct the VT parser from the preserved byte log with bounded RAM.
-    /// Unlike replay(limit), this does not discard histories above 32 MiB.
-    pub fn replay_stream(&self, id: &str, mut consume: impl FnMut(&[u8])) -> Result<()> {
-        let path = self.log_path(id);
-        if !path.exists() { return Ok(()); }
-        let mut file = File::open(path)?;
-        let mut chunk = [0u8; 64 * 1024];
-        loop {
-            let count = file.read(&mut chunk)?;
-            if count == 0 { break; }
-            consume(&chunk[..count]);
-        }
-        Ok(())
     }
 
     // Indexed text-only transcript, separate from the original ANSI byte log.
