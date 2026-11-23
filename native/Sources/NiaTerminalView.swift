@@ -164,7 +164,11 @@ final class NiaMetalView: MTKView, MTKViewDelegate {
     }
     private var terminalFrame: ScreenSnapshot? {
         didSet {
-            if hoveredLink != nil { hoveredLink = nil }
+            if hoveredLink != nil {
+                hoveredLink = nil
+                lastHoverCell = nil
+                NSCursor.arrow.set()
+            }
             needsDisplay = true
         }
     }
@@ -276,7 +280,8 @@ final class NiaMetalView: MTKView, MTKViewDelegate {
             candidate?.firstColumn != hoveredLink?.firstColumn ||
             candidate?.lastColumn != hoveredLink?.lastColumn
         hoveredLink = candidate
-        NSCursor.current = candidate == nil ? .arrow : .pointingHand
+        if candidate != nil { NSCursor.pointingHand.set() }
+        else { NSCursor.arrow.set() }
         if changed { needsDisplay = true }
     }
 
