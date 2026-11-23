@@ -12,6 +12,15 @@ nia_ es un **terminal experimental nativo para macOS** que combina una interfaz 
 
 > **Versión de desarrollo, no completamente estabilizada.** Remote, el reflow ANSI y la recuperación de historiales siguen sujetos a pruebas. Haz backup antes de actualizar. No se afirma que la seguridad esté auditada ni se prometen consumos de memoria verificados.
 
+## Idiomas y confirmación de salida (v0.7.1)
+
+- nia_ está localizada en **inglés y español**, incluidos menús, Preferencias, IA, estados del modelo, errores y acciones contextuales.
+- Entra en **Preferencias → General → Idioma** para elegir **Automático (macOS)**, **English** o **Español**. La elección queda guardada sin cambiar identificadores ni historiales.
+- **Preguntar antes de cerrar una sesión con exit** está activado por defecto. Si escribes exactamente `exit` o `logout` en una shell Zsh local e interactiva, nia_ pide permiso **antes de ejecutar el comando**.
+- Cancelar conserva la shell. Confirmar permite el exit y retira la pestaña cuando la PTY ha terminado y su salida se ha guardado; el historial permanece disponible para abrirla de nuevo.
+- Si un programa termina por sí solo, nia_ no puede impedir su finalización, pero retira la pestaña local una vez guardada la salida.
+- La confirmación previa de `exit` se aplica por ahora solo a **Zsh local**, no a Bash, Fish, SSH remoto ni comandos de salida internos de otras aplicaciones.
+
 ## Espacios de trabajo multiventana (experimental)
 
 - **⌘N** (Archivo → Nueva ventana) abre otra ventana nativa de nia_.
