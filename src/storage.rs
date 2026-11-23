@@ -408,9 +408,12 @@ impl Store {
         ).optional()?;
         let Some(line) = line else { return Ok(None) };
         let count: i64 = self.conn.query_row(
+            // The OSC marker is emitted at preexec, *after* the shell has
+            // echoed the command line. Include its preceding indexed line so
+            // navigation lands on the original command rather than only output.
             "SELECT COUNT(*) FROM history_lines
              WHERE session_id=?1 AND line_no>=?2 AND TRIM(text)<>''",
-            params![session,line], |r| r.get(0)
+            params![session,line.saturating_sub(1)], |r| r.get(0)
         )?;
         Ok(Some(count.max(0) as u64))
     }
