@@ -300,8 +300,14 @@ private extension FocusedValues {
         revisions.removeValue(forKey: name)
         previousScreenBySession.removeValue(forKey: name)
         paneSizes.removeValue(forKey: name)
+        if pendingExitSession == name { pendingExitSession = nil }
         if secondary == name { secondary = nil; splitMode = "off"; activePane = 0 }
-        if selected == name { selected = tabIDs.first }
+        if selected == name {
+            selected = secondary.flatMap { tabIDs.contains($0) ? $0 : nil } ?? tabIDs.first
+            secondary = nil
+            splitMode = "off"
+            activePane = 0
+        }
         if let selected { prepareScreen(for: selected); requestFocus(selected) }
         saveWorkspace()
     }
