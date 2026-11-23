@@ -32,6 +32,10 @@ nia_ is an **experimental native terminal for macOS** combining SwiftUI/AppKit c
 - The original layout is migrated once; new windows start empty.
 - macOS scene restoration is not guaranteed to recreate every previously closed window yet.
 
+## Smart links (iTerm2-inspired, lightweight)
+
+In the visible terminal output, **⌘-click** a detected HTTP/HTTPS URL to open it in your default browser. Right-click on a link for **Open link** and **Copy link**. No background URL scanners, networking services, or extra render passes are introduced: only the clicked row is inspected. URLs containing embedded credentials or unsupported schemes are not opened. Some wrapped URLs across multiple terminal lines are not recognized yet.
+
 ## Highlights
 
 | Area | Current capabilities | Important limits |
