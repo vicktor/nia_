@@ -55,6 +55,15 @@ impl NiaCore {
     fn refresh(&mut self) {
         // Keep sessions alive even when they aren't visible.
         for (id, term) in &mut self.live {
+            match term.take_command_marks() {
+                Ok(records) if !records.is_empty() => {
+                    if let Err(error) = self.store.append_command_marks(id, &records) {
+                        self.last_error = format!("Command timeline: {error}");
+                    }
+                },
+                Ok(_) => {},
+                Err(error) => self.last_error = format!("Command timeline: {error}"),
+            }
             match term.take_exit_request() {
                 Ok(true) => self.exit_requests.push(id.clone()),
                 Ok(false) => {},
@@ -197,6 +206,25 @@ pub unsafe extern "C" fn nia_confirm_exit(p: *mut NiaCore, name: *const c_char) 
             Err(e) => core.set_error(e),
         },
         None => core.set_error("Session is not running"),
+    }
+}
+
+/// Read a bounded timeline only when the user opens the history panel.
+/// This does not touch terminal output, session state or shell execution.
+#[no_mangle]
+pub unsafe extern "C" fn nia_command_marks(
+    p: *mut NiaCore, session: *const c_char
+) -> *mut c_char {
+    if p.is_null() { return to_c("[]") }
+    let core = &*p;
+    let id = match text_arg(session) {
+        Ok(id) => id,
+        Err(_) => return to_c("[]")
+    };
+    if !core.records.iter().any(|r| r.id == id) { return to_c("[]") }
+    match core.store.recent_command_marks(id, 200) {
+        Ok(entries) => json(&entries),
+        Err(_) => to_c("[]"),
     }
 }
 
