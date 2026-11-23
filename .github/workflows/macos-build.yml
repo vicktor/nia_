@@ -1,0 +1,58 @@
+name: macOS native build
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nia-macos-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build nia_ on macOS
+    runs-on: macos-15
+    timeout-minutes: 60
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Check build tools
+        run: |
+          xcodebuild -version
+          swiftc --version
+          cmake --version
+          cargo --version
+
+      - name: Cache Cargo dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Test Rust library and backup CLI
+        run: cargo test --locked --lib --bin nia-backup
+
+      - name: Build native macOS app (SwiftUI + Metal + Rust)
+        run: bash ./scripts/build-native-macos.sh
+
+      - name: Validate application bundle
+        run: |
+          test -x dist/nia_.app/Contents/MacOS/nia
+          test -x dist/nia_.app/Contents/MacOS/nia-backup
+          test -x dist/nia_.app/Contents/MacOS/nia-llama-server
+          plutil -lint dist/nia_.app/Contents/Info.plist
+          codesign --verify --deep --strict dist/nia_.app
+
+      - name: Upload application for testing
+        uses: actions/upload-artifact@v4
+        with:
+          name: nia_-macos-ci
+          path: dist/nia_.app
+          retention-days: 7
