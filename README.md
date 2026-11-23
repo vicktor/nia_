@@ -72,6 +72,13 @@ Local Zsh now emits an invisible **OSC 133** marker at command start. The stream
 - Navigation uses nia_'s text-indexed historical scrollback; interactive fullscreen TUI rendering cannot be reconstructed pixel-for-pixel from text alone.
 - In-memory PTYs, shell state, agent resume and titlebar are unaffected.
 
+## Fix: full terminal height and command jumps
+
+- Revalidate the PTY's rows and columns after SwiftUI updates the Metal view, preventing an old 30-row grid from leaving the bottom of a tall window unused.
+- Preserve indexed history navigation on PTY resize. Closing the command timeline can trigger a layout change and must not jump back to the live bottom.
+- Include the echoed command line immediately before its OSC 133 output anchor, so **View output** starts at the original command when the text index contains it.
+- The existing Zsh/Claude session restoration and native titlebar are unchanged.
+
 ## Highlights
 
 | Area | Current capabilities | Important limits |
