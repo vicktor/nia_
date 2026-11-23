@@ -499,6 +499,7 @@ private struct NiaWindowRoot: View {
     }
 }
 @main struct NiaApp: App {
+    @AppStorage("nia.language") private var language = "system"
     @FocusedValue(\.niaWindowModel) private var focusedModel
     var body: some Scene {
         // WindowGroup supplies the native Cmd+N action.
@@ -508,7 +509,7 @@ private struct NiaWindowRoot: View {
         .defaultSize(width: 1120, height: 740)
         .commands {
             CommandGroup(replacing: .appInfo) {
-                Button("Acerca de nia_") {
+                Button(NiaL10n.string("Acerca de nia_")) {
                     let github = URL(string: "https://github.com/vicktor/nia_")!
                     let text = NSMutableAttributedString(string: NiaL10n.string("Source / Código: github.com/vicktor/nia_ · MPL-2.0"))
                     let range = (text.string as NSString).range(of: "github.com/vicktor/nia_")
@@ -520,7 +521,7 @@ private struct NiaWindowRoot: View {
                         .credits: text
                     ])
                 }
-                Button("Repositorio de nia_ en GitHub") {
+                Button(NiaL10n.string("Repositorio de nia_ en GitHub")) {
                     if let url = URL(string: "https://github.com/vicktor/nia_") {
                         NSWorkspace.shared.open(url)
                     }
@@ -528,7 +529,7 @@ private struct NiaWindowRoot: View {
             }
             SidebarCommands()
             CommandGroup(after: .newItem) {
-                Button("Mostrar/ocultar sesiones") {
+                Button(NiaL10n.string("Mostrar/ocultar sesiones")) {
                     if let model = focusedModel {
                         model.sidebarVisibility = model.sidebarVisibility == .detailOnly ? .all : .detailOnly
                     }
@@ -540,7 +541,10 @@ private struct NiaWindowRoot: View {
                 }
             }
         }
-        Settings { NiaSettings() }
+        Settings {
+            NiaSettings()
+                .environment(\.locale, language == "system" ? Locale.autoupdatingCurrent : Locale(identifier: language))
+        }
     }
 }
 
