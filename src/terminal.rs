@@ -308,11 +308,11 @@ fn prepare_zsh_history(id: &str) -> Result<PathBuf> {
         # Command timeline: built-in Zsh hooks, no subprocess or prompt edits.\n\
         zmodload zsh/datetime 2>/dev/null\n\
         function _nia_mark_start() {{\n\
-          builtin printf 'S\\0%s\\0%s\\0%s\\0' "$EPOCHREALTIME" "$PWD" "$1" >> {6}\n\
+          builtin printf 'S\\0%s\\0%s\\0%s\\0' \"$EPOCHREALTIME\" \"$PWD\" \"$1\" >> {6}\n\
         }}\n\
         function _nia_mark_end() {{\n\
           local exit_status=$?\n\
-          builtin printf 'E\\0%s\\0%s\\0' "$EPOCHREALTIME" "$exit_status" >> {6}\n\
+          builtin printf 'E\\0%s\\0%s\\0' \"$EPOCHREALTIME\" \"$exit_status\" >> {6}\n\
         }}\n\
         add-zsh-hook preexec _nia_mark_start\n\
         # Register the completion hook first: subsequent state hooks may\n\
