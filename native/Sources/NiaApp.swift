@@ -59,11 +59,41 @@ private struct WorkspaceLayout: Codable {
     let secondary: String?
     let mode: String
     let focusedPane: Int
+    let tabs: [String]?
 }
 
+@MainActor private enum NiaSharedCore {
+    static let handle: UnsafeMutableRawPointer? = nia_core_new()
+    static var owners: [String: String] = [:]
+    static var aiQueue: [NiaAIQuery] = []
+    static func claim(_ session: String, window: String) -> Bool {
+        if let current = owners[session], current != window { return false }
+        owners[session] = window
+        return true
+    }
+    static func release(_ session: String, window: String) {
+        if owners[session] == window { owners.removeValue(forKey: session) }
+    }
+    static func releaseAll(_ window: String) {
+        owners = owners.filter { $0.value != window }
+    }
+}
+private struct NiaWindowModelKey: FocusedValueKey { typealias Value = NiaModel }
+private extension FocusedValues {
+    var niaWindowModel: NiaModel? {
+        get { self[NiaWindowModelKey.self] }
+        set { self[NiaWindowModelKey.self] = newValue }
+    }
+}
 @MainActor final class NiaModel: ObservableObject {
     private var handle: UnsafeMutableRawPointer?
     @Published var sessions: [SessionEntry] = []
+    @Published private(set) var tabIDs: [String] = []
+    var visibleSessions: [SessionEntry] {
+        tabIDs.compactMap { id in sessions.first { $0.id == id } }
+    }
+    private var windowID: String?
+
     @Published var selected: String? = nil
     @Published private(set) var frames: [String: ScreenSnapshot] = [:]
     @Published private(set) var revisions: [String: UInt64] = [:]
@@ -81,12 +111,11 @@ private struct WorkspaceLayout: Codable {
     private var paneSizes: [String: (rows: Int, columns: Int)] = [:]
 
     init() {
-        handle = nia_core_new()
+        handle = NiaSharedCore.handle
         guard let handle else { error = "No se pudo abrir la base de datos de Nia"; return }
         let saved = UserDefaults.standard.object(forKey: "nia.scrollbackLines") as? Int ?? 10000
         _ = nia_set_scrollback_limit(handle, UInt32(clamping: min(100000, max(1000, saved))))
         refreshSessions()
-        restoreWorkspace()
         let poll = Timer(timeInterval: 0.12, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.tick() }
         }
@@ -114,42 +143,64 @@ private struct WorkspaceLayout: Codable {
             sessions = entries
         }
     }
+    func configureWindow(_ id: String) {
+        guard windowID == nil else { return }
+        windowID = id
+        restoreWorkspace()
+    }
+    func detachWindow() {
+        guard let id = windowID else { return }
+        saveWorkspace()
+        NiaSharedCore.releaseAll(id)
+        windowID = nil
+    }
     private func saveWorkspace() {
-        guard let handle else { return }
+        guard windowID != nil else { return }
         let layout = WorkspaceLayout(primary: selected,
                                      secondary: secondary,
                                      mode: splitMode,
-                                     focusedPane: splitMode == "off" ? 0 : activePane)
+                                     focusedPane: splitMode == "off" ? 0 : activePane,
+                                     tabs: tabIDs)
         guard let data = try? JSONEncoder().encode(layout),
               let payload = String(data: data, encoding: .utf8) else { return }
-        let code = payload.withCString { nia_save_workspace_layout(handle, $0) }
-        if code != 0 { error = resultString(nia_last_error(handle)) }
+        // Persist per native window, rather than overwriting the other windows.
+        UserDefaults.standard.set(payload, forKey: "nia.workspace.\(windowID!)")
     }
 
     private func restoreWorkspace() {
-        guard let handle else { return }
-        let raw = resultString(nia_workspace_layout(handle))
-        let saved = raw.data(using: .utf8).flatMap { try? JSONDecoder().decode(WorkspaceLayout.self, from: $0) }
-        let available = Set(sessions.filter { !$0.closed }.map(\.id))
-        // The database is authoritative. Migrate the pre-v0.4.8 settings once.
-        let primary = saved?.primary ?? sessions.first(where: { !$0.closed })?.id
-        let legacyMode = UserDefaults.standard.string(forKey: "nia.splitMode") ?? "off"
-        let mode = saved?.mode ?? legacyMode
-        let candidateSecondary = saved?.secondary ?? UserDefaults.standard.string(forKey: "nia.secondarySession")
-        selected = primary.flatMap { available.contains($0) ? $0 : nil }
-        secondary = candidateSecondary.flatMap { available.contains($0) && $0 != selected ? $0 : nil }
-        splitMode = ["vertical", "horizontal"].contains(mode) && secondary != nil && selected != nil ? mode : "off"
-        activePane = splitMode != "off" && saved?.focusedPane == 1 ? 1 : 0
-        // Open both shells first. Never let the first listed session replace a saved pane.
-        if let selected, report(selected.withCString({ nia_open_session(handle, $0) })) {
-            prepareScreen(for: selected)
+        guard let handle, let windowID else { return }
+        var saved = UserDefaults.standard.string(forKey: "nia.workspace.\(windowID)")
+            .flatMap { $0.data(using: .utf8) }
+            .flatMap { try? JSONDecoder().decode(WorkspaceLayout.self, from: $0) }
+        let migrate = !UserDefaults.standard.bool(forKey: "nia.workspace.migrated")
+        if saved == nil && migrate {
+            let old = resultString(nia_workspace_layout(handle))
+            saved = old.data(using: .utf8).flatMap {
+                try? JSONDecoder().decode(WorkspaceLayout.self, from: $0)
+            }
+            UserDefaults.standard.set(true, forKey: "nia.workspace.migrated")
         }
-        if splitMode != "off", let secondary,
-           report(secondary.withCString({ nia_open_session(handle, $0) })) {
-            prepareScreen(for: secondary)
+        let existing = Set(sessions.map(\.id))
+        let candidates = saved?.tabs ?? (migrate
+            ? sessions.filter { !$0.closed }.map(\.id)
+            : [saved?.primary, saved?.secondary].compactMap { $0 })
+        var accepted: [String] = []
+        for id in candidates where existing.contains(id) && !accepted.contains(id) {
+            if NiaSharedCore.claim(id, window: windowID) { accepted.append(id) }
+        }
+        tabIDs = accepted
+        selected = saved?.primary.flatMap { accepted.contains($0) ? $0 : nil } ?? accepted.first
+        secondary = saved?.secondary.flatMap { accepted.contains($0) && $0 != selected ? $0 : nil }
+        let mode = saved?.mode ?? "off"
+        splitMode = ["vertical", "horizontal"].contains(mode) && secondary != nil ? mode : "off"
+        activePane = splitMode != "off" && saved?.focusedPane == 1 ? 1 : 0
+        for id in [selected, splitMode == "off" ? nil : secondary].compactMap({ $0 }) {
+            if report(id.withCString({ nia_open_session(handle, $0) })) {
+                prepareScreen(for: id)
+            }
         }
         saveWorkspace()
-        if let focus = activePane == 1 ? secondary : selected { requestFocus(focus) }
+        if let id = activePane == 1 ? secondary : selected { requestFocus(id) }
     }
 
     func reconnectRemote(_ name: String) {
@@ -183,7 +234,12 @@ private struct WorkspaceLayout: Codable {
         focusEpoch &+= 1
     }
     func activate(_ name: String) {
-        guard let handle else { return }
+        guard let handle, let windowID else { return }
+        let adding = !tabIDs.contains(name)
+        if adding && !NiaSharedCore.claim(name, window: windowID) {
+            error = "Esta sesión está abierta en otra ventana. Ciérrala allí para trasladarla."
+            return
+        }
         // Explicitly keep the two panes distinct; selecting a session already
         // visible in the other pane moves keyboard focus there instead.
         if splitMode != "off" && name == secondary {
@@ -198,7 +254,11 @@ private struct WorkspaceLayout: Codable {
             requestFocus(name)
             return
         }
-        guard report(name.withCString({ nia_open_session(handle, $0) })) else { return }
+        guard report(name.withCString({ nia_open_session(handle, $0) })) else {
+            if adding { NiaSharedCore.release(name, window: windowID) }
+            return
+        }
+        if adding { tabIDs.append(name) }
         refreshSessions()
         // Decode a complete screen before publishing the pane identity.
         prepareScreen(for: name)
@@ -212,28 +272,28 @@ private struct WorkspaceLayout: Codable {
         requestFocus(name)
     }
     func archive(_ name: String) {
-        guard let handle else { return }
-        if report(name.withCString({ nia_archive_session(handle, $0) })) {
-            frames.removeValue(forKey: name)
-            revisions.removeValue(forKey: name)
-            previousScreenBySession.removeValue(forKey: name)
-            if secondary == name {
-                secondary = nil
-                splitMode = "off"
-                activePane = 0
-            }
-            if selected == name { selected = sessions.first(where: { !$0.closed && $0.id != name })?.id }
-            refreshSessions()
-            if let selected { prepareScreen(for: selected); requestFocus(selected) }
-            saveWorkspace()
-        }
+        // Closing a window's tab does not terminate a PTY or delete its history.
+        guard let windowID else { return }
+        tabIDs.removeAll { $0 == name }
+        NiaSharedCore.release(name, window: windowID)
+        frames.removeValue(forKey: name)
+        revisions.removeValue(forKey: name)
+        previousScreenBySession.removeValue(forKey: name)
+        paneSizes.removeValue(forKey: name)
+        if secondary == name { secondary = nil; splitMode = "off"; activePane = 0 }
+        if selected == name { selected = tabIDs.first }
+        if let selected { prepareScreen(for: selected); requestFocus(selected) }
+        saveWorkspace()
     }
+
     func reorder(_ dragged: String, relativeTo target: String, after: Bool) {
-        guard dragged != target, let handle else { return }
-        if report(dragged.withCString({ from in
-            target.withCString { to in nia_move_session_relative(handle, from, to, after ? 1 : 0) }
-        })) { refreshSessions() }
+        guard dragged != target, let from = tabIDs.firstIndex(of: dragged) else { return }
+        tabIDs.remove(at: from)
+        guard let to = tabIDs.firstIndex(of: target) else { return }
+        tabIDs.insert(dragged, at: to + (after ? 1 : 0))
+        saveWorkspace()
     }
+
     func setSplit(_ mode: String) {
         guard ["off", "vertical", "horizontal"].contains(mode) else { return }
         splitMode = mode
@@ -244,7 +304,7 @@ private struct WorkspaceLayout: Codable {
             return
         }
         if secondary == nil || secondary == selected {
-            secondary = sessions.first(where: { !$0.closed && $0.id != selected })?.id
+            secondary = visibleSessions.first(where: { $0.id != selected })?.id
         }
         if let secondary {
             if let handle { _ = secondary.withCString { nia_open_session(handle, $0) } }
@@ -254,8 +314,17 @@ private struct WorkspaceLayout: Codable {
         if let selected { requestFocus(selected) }
     }
     func chooseSecondary(_ id: String) {
-        guard let handle, id != selected else { return }
-        guard report(id.withCString({ nia_open_session(handle, $0) })) else { return }
+        guard let handle, id != selected, let windowID else { return }
+        let adding = !tabIDs.contains(id)
+        if adding && !NiaSharedCore.claim(id, window: windowID) {
+            error = "Esta sesión pertenece a otra ventana."
+            return
+        }
+        guard report(id.withCString({ nia_open_session(handle, $0) })) else {
+            if adding { NiaSharedCore.release(id, window: windowID) }
+            return
+        }
+        if adding { tabIDs.append(id) }
         secondary = id
         if splitMode == "off" { splitMode = "vertical" }
         refreshSessions()
@@ -284,7 +353,7 @@ private struct WorkspaceLayout: Codable {
         }
     }
     func selectSlot(_ number: Int) {
-        if sessions.indices.contains(number) { activate(sessions[number].id) }
+        if tabIDs.indices.contains(number) { activate(tabIDs[number]) }
     }
     func send(_ bytes: [UInt8], to id: String) {
         guard let handle, !bytes.isEmpty else { return }
@@ -343,25 +412,44 @@ private struct WorkspaceLayout: Codable {
         aiRequest = pendingAIRequests.removeFirst()
     }
     private func tick() {
-        guard let handle else { return }
+        guard let handle, windowID != nil else { return }
         nia_poll(handle)
+        refreshSessions()
         let payload = resultString(nia_take_ai_queries(handle))
         if let data = payload.data(using: .utf8),
            let incoming = try? JSONDecoder().decode([NiaAIQuery].self, from: data) {
-            pendingAIRequests.append(contentsOf: incoming)
-            showNextAIRequest()
+            NiaSharedCore.aiQueue.append(contentsOf: incoming)
         }
+        let own = NiaSharedCore.aiQueue.filter { tabIDs.contains($0.session_id) }
+        NiaSharedCore.aiQueue.removeAll { tabIDs.contains($0.session_id) }
+        pendingAIRequests.append(contentsOf: own)
+        showNextAIRequest()
         if let selected { refreshScreen(for: selected) }
-        if splitMode != "off", let secondary, secondary != selected { refreshScreen(for: secondary) }
+        if splitMode != "off", let secondary, secondary != selected {
+            refreshScreen(for: secondary)
+        }
     }
 }
 
-@main struct NiaApp: App {
+private struct NiaWindowRoot: View {
+    @SceneStorage("nia.workspace.identity") private var windowID = UUID().uuidString
     @StateObject private var model = NiaModel()
+
+    var body: some View {
+        MainWindow()
+            .environmentObject(model)
+            .focusedSceneValue(\.niaWindowModel, model)
+            .frame(minWidth: 720, minHeight: 420)
+            .onAppear { model.configureWindow(windowID) }
+            .onDisappear { model.detachWindow() }
+    }
+}
+@main struct NiaApp: App {
+    @FocusedValue(\.niaWindowModel) private var focusedModel
     var body: some Scene {
+        // WindowGroup supplies the native Cmd+N action.
         WindowGroup("nia_") {
-            MainWindow().environmentObject(model)
-                .frame(minWidth: 720, minHeight: 420)
+            NiaWindowRoot()
         }
         .defaultSize(width: 1120, height: 740)
         .commands {
@@ -387,11 +475,13 @@ private struct WorkspaceLayout: Codable {
             SidebarCommands()
             CommandGroup(after: .newItem) {
                 Button("Mostrar/ocultar sesiones") {
-                    model.sidebarVisibility = model.sidebarVisibility == .detailOnly ? .all : .detailOnly
+                    if let model = focusedModel {
+                        model.sidebarVisibility = model.sidebarVisibility == .detailOnly ? .all : .detailOnly
+                    }
                 }.keyboardShortcut("b", modifiers: .command)
                 Divider()
                 ForEach(0..<9, id: \.self) { index in
-                    Button("Sesión \(index + 1)") { model.selectSlot(index) }
+                    Button("Sesión \(index + 1)") { focusedModel?.selectSlot(index) }
                         .keyboardShortcut(KeyEquivalent(Character(String(index+1))), modifiers: .command)
                 }
             }
@@ -431,7 +521,7 @@ struct MainWindow: View {
 
                 List(selection: Binding(get: { model.activePane == 1 && model.splitMode != "off" ? model.secondary : model.selected }, set: { if let id = $0 { model.activate(id) } })) {
                     Section("SESIONES") {
-                        ForEach(model.sessions.filter { filter.isEmpty || $0.id.localizedCaseInsensitiveContains(filter) }) { item in
+                        ForEach(model.visibleSessions.filter { filter.isEmpty || $0.id.localizedCaseInsensitiveContains(filter) }) { item in
                             HStack(spacing: 8) {
                                 Image(systemName: item.closed ? "archivebox" : (item.remote_host == nil ? "terminal" : "network"))
                                     .foregroundStyle(Color(hexRGB: item.color))
@@ -494,7 +584,7 @@ struct MainWindow: View {
                                 }
                                 if !item.closed {
                                     Button("Abrir en segundo panel") { model.chooseSecondary(item.id) }
-                                    Button("Archivar", role: .destructive) { model.archive(item.id) }
+                                    Button("Cerrar pestaña") { model.archive(item.id) }
                                 }
                             }
                         }
@@ -510,6 +600,14 @@ struct MainWindow: View {
                         .buttonStyle(.bordered).help("Crear sesión local")
                     Button { showRemoteSetup = true } label: { Image(systemName: "network") }
                         .buttonStyle(.bordered).help("Nueva sesión SSH remota")
+                    Menu {
+                        ForEach(model.sessions.filter { !model.tabIDs.contains($0.id) }) { item in
+                            Button(item.id) { model.activate(item.id) }
+                        }
+                    } label: {
+                        Image(systemName: "folder.badge.plus")
+                    }
+                    .help("Abrir sesión guardada en esta ventana")
                 }
                 .padding(10)
             }
