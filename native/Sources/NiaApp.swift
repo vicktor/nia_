@@ -114,7 +114,7 @@ private extension FocusedValues {
 
     init() {
         handle = NiaSharedCore.handle
-        guard let handle else { error = "No se pudo abrir la base de datos de Nia"; return }
+        guard let handle else { error = NSLocalizedString("No se pudo abrir la base de datos de Nia", comment: ""); return }
         let saved = UserDefaults.standard.object(forKey: "nia.scrollbackLines") as? Int ?? 10000
         _ = nia_set_scrollback_limit(handle, UInt32(clamping: min(100000, max(1000, saved))))
         refreshSessions()
@@ -243,7 +243,7 @@ private extension FocusedValues {
         guard let handle, let windowID else { return }
         let adding = !tabIDs.contains(name)
         if adding && !NiaSharedCore.claim(name, window: windowID) {
-            error = "Esta sesión está abierta en otra ventana. Ciérrala allí para trasladarla."
+            error = NSLocalizedString("Esta sesión está abierta en otra ventana. Ciérrala allí para trasladarla.", comment: "")
             return
         }
         // Explicitly keep the two panes distinct; selecting a session already
@@ -323,7 +323,7 @@ private extension FocusedValues {
         guard let handle, id != selected, let windowID else { return }
         let adding = !tabIDs.contains(id)
         if adding && !NiaSharedCore.claim(id, window: windowID) {
-            error = "Esta sesión pertenece a otra ventana."
+            error = NSLocalizedString("Esta sesión pertenece a otra ventana.", comment: "")
             return
         }
         guard report(id.withCString({ nia_open_session(handle, $0) })) else {
@@ -494,7 +494,7 @@ private struct NiaWindowRoot: View {
             CommandGroup(replacing: .appInfo) {
                 Button("Acerca de nia_") {
                     let github = URL(string: "https://github.com/vicktor/nia_")!
-                    let text = NSMutableAttributedString(string: "Source / Código: github.com/vicktor/nia_ · MPL-2.0")
+                    let text = NSMutableAttributedString(string: NSLocalizedString("Source / Código: github.com/vicktor/nia_ · MPL-2.0", comment: ""))
                     let range = (text.string as NSString).range(of: "github.com/vicktor/nia_")
                     text.addAttribute(.link, value: github, range: range)
                     NSApp.orderFrontStandardAboutPanel(options: [
@@ -519,7 +519,7 @@ private struct NiaWindowRoot: View {
                 }.keyboardShortcut("b", modifiers: .command)
                 Divider()
                 ForEach(0..<9, id: \.self) { index in
-                    Button("Sesión \(index + 1)") { focusedModel?.selectSlot(index) }
+                    Button(String(format: NSLocalizedString("Sesión %d", comment: ""), index + 1)) { focusedModel?.selectSlot(index) }
                         .keyboardShortcut(KeyEquivalent(Character(String(index+1))), modifiers: .command)
                 }
             }
@@ -616,7 +616,7 @@ struct MainWindow: View {
                                 }
                             ))
                             .contextMenu {
-                                Button(item.closed ? "Abrir sesión" : "Cambiar a sesión") { model.activate(item.id) }
+                                Button(LocalizedStringKey(item.closed ? "Abrir sesión" : "Cambiar a sesión")) { model.activate(item.id) }
                                 if item.remote_host != nil {
                                     Button("Reconectar SSH") { model.reconnectRemote(item.id) }
                                 }
@@ -735,7 +735,7 @@ struct MainWindow: View {
             }
         } message: {
             if let name = model.pendingExitSession {
-                Text("La sesión «\(name)» sigue activa. ¿Quieres ejecutar exit y cerrarla?")
+                Text(String(format: NSLocalizedString("La sesión «%@» sigue activa. ¿Quieres ejecutar exit y cerrarla?", comment: ""), name))
             }
         }
         .sheet(item: $model.aiRequest, onDismiss: {
