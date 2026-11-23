@@ -63,6 +63,15 @@ In a local Zsh session, nia_ records **completed commands** together with their 
 - Explicitly launched conversations using `claude --resume <id>`, `codex resume <id>`, or `gemini --resume <id>` are remembered while running and re-invoked on shell recovery. Only validated exact resume commands are eligible; arbitrary commands are never replayed.
 - Agent session recovery requires the relevant CLI and its own conversation data on this Mac. Existing conversations launched **before** this feature cannot be identified retroactively.
 
+## Command-output navigation (v0.7.4)
+
+Local Zsh now emits an invisible **OSC 133** marker at command start. The streaming history indexer records its exact indexed line in SQLite, independently from the visible PTY. Open the Command Timeline (⌘⇧H) and choose **View output** to jump to the matching transcript page without running the command again. The existing **Copy** and **Insert** actions are unchanged.
+
+- No new daemons or renderer scanning; markers are parsed as ANSI bytes arrive.
+- Historical commands recorded before this version have no anchor; **View output** is disabled until a command runs with the updated hooks.
+- Navigation uses nia_'s text-indexed historical scrollback; interactive fullscreen TUI rendering cannot be reconstructed pixel-for-pixel from text alone.
+- In-memory PTYs, shell state, agent resume and titlebar are unaffected.
+
 ## Highlights
 
 | Area | Current capabilities | Important limits |
