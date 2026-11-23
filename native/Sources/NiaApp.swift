@@ -561,6 +561,7 @@ struct MainWindow: View {
     @State private var remoteName = ""
     @State private var remoteHost = ""
     @State private var filter = ""
+    @State private var showExitConfirmation = false
     @State private var draggingSession: String?
     @State private var dropTarget: String?
     @State private var dropAfter = false
@@ -739,12 +740,12 @@ struct MainWindow: View {
             .padding(22)
             .frame(width: 440)
         }
+        .onChange(of: model.pendingExitSession) { _, id in
+            showExitConfirmation = (id != nil)
+        }
         .confirmationDialog(
             "¿Finalizar esta sesión?",
-            isPresented: Binding(
-                get: { model.pendingExitSession != nil },
-                set: { if !$0 { model.cancelPendingExit() } }
-            ),
+            isPresented: $showExitConfirmation,
             titleVisibility: .visible
         ) {
             Button("Finalizar sesión", role: .destructive) {
