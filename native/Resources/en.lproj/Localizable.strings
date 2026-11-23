@@ -170,3 +170,4 @@
 "Exit interception is only supported in local Zsh" = "Exit interception is only supported in local Zsh";
 "Abrir enlace" = "Open link";
 "Copiar enlace" = "Copy link";
+"No hay sesiones guardadas" = "No saved sessions";
