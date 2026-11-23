@@ -667,16 +667,6 @@ struct MainWindow: View {
                         .onSubmit { create() }
                     Button(action: create) { Image(systemName: "plus") }
                         .buttonStyle(.bordered).help("Crear sesión local")
-                    Button { showRemoteSetup = true } label: { Image(systemName: "network") }
-                        .buttonStyle(.bordered).help("Nueva sesión SSH remota")
-                    Menu {
-                        ForEach(model.sessions.filter { !model.tabIDs.contains($0.id) }) { item in
-                            Button(item.id) { model.activate(item.id) }
-                        }
-                    } label: {
-                        Image(systemName: "folder.badge.plus")
-                    }
-                    .help("Abrir sesión guardada en esta ventana")
                 }
                 .padding(10)
             }
@@ -711,10 +701,11 @@ struct MainWindow: View {
         }
         .background(NiaWindowTransparency(opacity: model.selected == nil ? 1.0 : terminalOpacity))
         .navigationTitle(model.selected ?? "nia_")
-        // Restore native macOS titlebar, including traffic-light controls,
-        // window dragging, and the normal system sidebar toggle.
+        // Keep the native macOS titlebar and traffic-light controls.
+        // Arrange the three workspace actions left to right in one group.
+        // No custom titlebar overlays or NSWindow toolbar manipulation.
         .toolbar {
-            ToolbarItem(placement: .primaryAction) {
+            ToolbarItemGroup(placement: .primaryAction) {
                 Menu {
                     Button { model.setSplit("off") } label: {
                         Label("Una sesión", systemImage: "rectangle")
@@ -731,8 +722,26 @@ struct MainWindow: View {
                         : model.splitMode == "horizontal"
                             ? "rectangle.split.1x2" : "rectangle")
                 }
-                .menuStyle(.borderlessButton)
                 .help("Disposición de terminales")
+                Button {
+                    showRemoteSetup = true
+                } label: {
+                    Image(systemName: "network")
+                }
+                .help("Nueva sesión SSH remota")
+                Menu {
+                    let saved = model.sessions.filter { !model.tabIDs.contains($0.id) }
+                    if saved.isEmpty {
+                        Text("No hay sesiones guardadas")
+                    } else {
+                        ForEach(saved) { item in
+                            Button(item.id) { model.activate(item.id) }
+                        }
+                    }
+                } label: {
+                    Image(systemName: "folder.badge.plus")
+                }
+                .help("Abrir sesión guardada en esta ventana")
             }
         }
         .sheet(isPresented: $showRemoteSetup) {
