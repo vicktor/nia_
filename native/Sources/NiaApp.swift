@@ -148,7 +148,7 @@ private extension FocusedValues {
         return String(cString: value)
     }
     private func report(_ code: Int32) -> Bool {
-        guard code == 0 else { error = resultString(nia_last_error(handle)); return false }
+        guard code == 0 else { error = NiaL10n.string(resultString(nia_last_error(handle))); return false }
         error = nil
         return true
     }
@@ -183,7 +183,7 @@ private extension FocusedValues {
         let status = windowID.withCString { id in
             payload.withCString { nia_save_window_workspace(handle, id, $0) }
         }
-        if status != 0 { error = resultString(nia_last_error(handle)) }
+        if status != 0 { error = NiaL10n.string(resultString(nia_last_error(handle))) }
     }
 
     private func restoreWorkspace() {
