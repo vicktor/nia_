@@ -136,14 +136,13 @@ impl NiaCore {
         self.disk_scroll.remove(id);
         if !self.live.contains_key(id) {
             let remote_host = self.store.remote_host(id).map_err(|e| e.to_string())?;
-            let mut term = LiveTerminal::spawn(record.clone(), 30, 100, self.scrollback_lines, remote_host.as_deref())
+            let term = LiveTerminal::spawn(record.clone(), 30, 100, self.scrollback_lines, remote_host.as_deref())
                 .map_err(|e| e.to_string())?;
-            // Remote tmux redraws its live screen after the SSH attachment.
-            // Don't replay a stale local transcript into a live remote PTY.
-            if remote_host.is_none() {
-                self.store.replay_stream(id, |chunk| term.parser.process(chunk))
-                    .map_err(|e| format!("Cannot restore session {id}: {e}"))?;
-            }
+            // A restarted shell is a NEW live process. Replaying the old ANSI
+            // log into its live parser left a stale prompt at the bottom,
+            // followed by the new Zsh prompt (sometimes with a stray '%').
+            // Preserve ANSI/history on disk; use indexed disk scrollback to
+            // inspect past output without contaminating the live VT screen.
             self.live.insert(id.to_string(), term);
         }
         Ok(())

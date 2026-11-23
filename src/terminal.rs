@@ -214,6 +214,8 @@ fn prepare_zsh_history(id: &str) -> Result<PathBuf> {
         SAVEHIST=20000\n\
         unsetopt SHARE_HISTORY\n\
         setopt INC_APPEND_HISTORY\n\
+        # Suppress Zsh's isolated '%' marker when previous output lacks LF.\n\
+        PROMPT_EOL_MARK=''\n\
         # Restore a previously active venv only if it still exists.\n\
         if [[ -n ${{EMBER_RESTORE_VENV:-}} && -f $EMBER_RESTORE_VENV/bin/activate ]]; then\n\
           source $EMBER_RESTORE_VENV/bin/activate\n\

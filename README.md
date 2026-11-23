@@ -36,6 +36,12 @@ nia_ is an **experimental native terminal for macOS** combining SwiftUI/AppKit c
 
 In the visible terminal output, **⌘-click** a detected HTTP/HTTPS URL to open it in your default browser. Right-click on a link for **Open link** and **Copy link**. No background URL scanners, networking services, or extra render passes are introduced: only the clicked row is inspected. URLs containing embedded credentials or unsupported schemes are not opened. Some wrapped URLs across multiple terminal lines are not recognized yet.
 
+## Toolbar and shell restoration fixes
+
+- The macOS toolbar is hidden in favor of two **fixed 28 pt** controls in the terminal content header (sidebar toggle and split selector), avoiding oversized controls in light appearance.
+- Restarting a local shell now starts with a **clean VT screen** instead of replaying a historical ANSI prompt into the live parser. Existing session logs and indexed scrollback remain stored on disk.
+- The generated Zsh startup configuration disables the standalone `%` end-of-line marker with `PROMPT_EOL_MARK=''`. This does not alter the shell prompt itself.
+
 ## Highlights
 
 | Area | Current capabilities | Important limits |
