@@ -3,6 +3,20 @@ import SwiftUI
 import AppKit
 import UniformTypeIdentifiers
 
+// Unified localization for AppKit messages and Swift errors. SwiftUI Text/Label
+// use the scene's Locale environment; AppKit selects the same language here.
+enum NiaL10n {
+    static func string(_ key: String) -> String {
+        let code = UserDefaults.standard.string(forKey: "nia.language") ?? "system"
+        if code == "en" || code == "es",
+           let path = Bundle.main.path(forResource: code, ofType: "lproj"),
+           let bundle = Bundle(path: path) {
+            return bundle.localizedString(forKey: key, value: nil, table: nil)
+        }
+        return NSLocalizedString(key, comment: "")
+    }
+}
+
 // Font list is cached once; never enumerate fonts on each SwiftUI redraw.
 // Store the PostScript name, because families may contain proportional variants.
 private struct NiaFontChoice: Identifiable {
@@ -66,6 +80,7 @@ private struct WorkspaceLayout: Codable {
     static let handle: UnsafeMutableRawPointer? = nia_core_new()
     static var owners: [String: String] = [:]
     static var aiQueue: [NiaAIQuery] = []
+    static var exitQueue: [String] = []
     static func claim(_ session: String, window: String) -> Bool {
         if let current = owners[session], current != window { return false }
         owners[session] = window
@@ -104,6 +119,7 @@ private extension FocusedValues {
     @Published private(set) var focusSession: String? = nil
     @Published var error: String?
     @Published var aiRequest: NiaAIQuery?
+    @Published var pendingExitSession: String?
     private var pendingAIRequests: [NiaAIQuery] = []
     @Published var sidebarVisibility: NavigationSplitViewVisibility = .all
     private var timer: Timer?
@@ -112,7 +128,7 @@ private extension FocusedValues {
 
     init() {
         handle = NiaSharedCore.handle
-        guard let handle else { error = "No se pudo abrir la base de datos de Nia"; return }
+        guard let handle else { error = NiaL10n.string("No se pudo abrir la base de datos de Nia"); return }
         let saved = UserDefaults.standard.object(forKey: "nia.scrollbackLines") as? Int ?? 10000
         _ = nia_set_scrollback_limit(handle, UInt32(clamping: min(100000, max(1000, saved))))
         refreshSessions()
@@ -132,7 +148,7 @@ private extension FocusedValues {
         return String(cString: value)
     }
     private func report(_ code: Int32) -> Bool {
-        guard code == 0 else { error = resultString(nia_last_error(handle)); return false }
+        guard code == 0 else { error = NiaL10n.string(resultString(nia_last_error(handle))); return false }
         error = nil
         return true
     }
@@ -167,7 +183,7 @@ private extension FocusedValues {
         let status = windowID.withCString { id in
             payload.withCString { nia_save_window_workspace(handle, id, $0) }
         }
-        if status != 0 { error = resultString(nia_last_error(handle)) }
+        if status != 0 { error = NiaL10n.string(resultString(nia_last_error(handle))) }
     }
 
     private func restoreWorkspace() {
@@ -241,7 +257,7 @@ private extension FocusedValues {
         guard let handle, let windowID else { return }
         let adding = !tabIDs.contains(name)
         if adding && !NiaSharedCore.claim(name, window: windowID) {
-            error = "Esta sesión está abierta en otra ventana. Ciérrala allí para trasladarla."
+            error = NiaL10n.string("Esta sesión está abierta en otra ventana. Ciérrala allí para trasladarla.")
             return
         }
         // Explicitly keep the two panes distinct; selecting a session already
@@ -284,8 +300,14 @@ private extension FocusedValues {
         revisions.removeValue(forKey: name)
         previousScreenBySession.removeValue(forKey: name)
         paneSizes.removeValue(forKey: name)
+        if pendingExitSession == name { pendingExitSession = nil }
         if secondary == name { secondary = nil; splitMode = "off"; activePane = 0 }
-        if selected == name { selected = tabIDs.first }
+        if selected == name {
+            selected = secondary.flatMap { tabIDs.contains($0) ? $0 : nil } ?? tabIDs.first
+            secondary = nil
+            splitMode = "off"
+            activePane = 0
+        }
         if let selected { prepareScreen(for: selected); requestFocus(selected) }
         saveWorkspace()
     }
@@ -321,7 +343,7 @@ private extension FocusedValues {
         guard let handle, id != selected, let windowID else { return }
         let adding = !tabIDs.contains(id)
         if adding && !NiaSharedCore.claim(id, window: windowID) {
-            error = "Esta sesión pertenece a otra ventana."
+            error = NiaL10n.string("Esta sesión pertenece a otra ventana.")
             return
         }
         guard report(id.withCString({ nia_open_session(handle, $0) })) else {
@@ -411,6 +433,17 @@ private extension FocusedValues {
         frames[id] = snap
         revisions[id, default: 0] &+= 1
     }
+    func approvePendingExit() {
+        guard let id = pendingExitSession, let handle else { return }
+        pendingExitSession = nil
+        if !report(id.withCString({ nia_confirm_exit(handle, $0) })) { return }
+    }
+
+    func cancelPendingExit() {
+        pendingExitSession = nil
+        // The Zsh line was discarded before execution. Shell is untouched.
+    }
+
     func showNextAIRequest() {
         guard aiRequest == nil, !pendingAIRequests.isEmpty else { return }
         aiRequest = pendingAIRequests.removeFirst()
@@ -419,6 +452,27 @@ private extension FocusedValues {
         guard let handle, windowID != nil else { return }
         nia_poll(handle)
         refreshSessions()
+        // A completed local PTY is archived by Rust. Remove its tab from
+        // whichever native window currently owns the presentation.
+        for id in tabIDs where sessions.first(where: { $0.id == id })?.closed == true {
+            archive(id)
+        }
+        let rawExitRequests = resultString(nia_take_exit_requests(handle))
+        if let data = rawExitRequests.data(using: .utf8),
+           let requested = try? JSONDecoder().decode([String].self, from: data) {
+            NiaSharedCore.exitQueue.append(contentsOf: requested)
+        }
+        let mine = NiaSharedCore.exitQueue.filter { tabIDs.contains($0) }
+        NiaSharedCore.exitQueue.removeAll { tabIDs.contains($0) }
+        for id in mine {
+            if !(UserDefaults.standard.object(forKey: "nia.confirmExit") as? Bool ?? true) {
+                _ = report(id.withCString { nia_confirm_exit(handle, $0) })
+            } else if pendingExitSession == nil {
+                pendingExitSession = id
+            } else {
+                NiaSharedCore.exitQueue.append(id)
+            }
+        }
         let payload = resultString(nia_take_ai_queries(handle))
         if let data = payload.data(using: .utf8),
            let incoming = try? JSONDecoder().decode([NiaAIQuery].self, from: data) {
@@ -438,10 +492,12 @@ private extension FocusedValues {
 private struct NiaWindowRoot: View {
     @SceneStorage("nia.workspace.identity") private var windowID = UUID().uuidString
     @StateObject private var model = NiaModel()
+    @AppStorage("nia.language") private var language = "system"
 
     var body: some View {
         MainWindow()
             .environmentObject(model)
+            .environment(\.locale, language == "system" ? Locale.autoupdatingCurrent : Locale(identifier: language))
             .focusedSceneValue(\.niaWindowModel, model)
             .frame(minWidth: 720, minHeight: 420)
             .onAppear { model.configureWindow(windowID) }
@@ -449,6 +505,7 @@ private struct NiaWindowRoot: View {
     }
 }
 @main struct NiaApp: App {
+    @AppStorage("nia.language") private var language = "system"
     @FocusedValue(\.niaWindowModel) private var focusedModel
     var body: some Scene {
         // WindowGroup supplies the native Cmd+N action.
@@ -458,9 +515,9 @@ private struct NiaWindowRoot: View {
         .defaultSize(width: 1120, height: 740)
         .commands {
             CommandGroup(replacing: .appInfo) {
-                Button("Acerca de nia_") {
+                Button(NiaL10n.string("Acerca de nia_")) {
                     let github = URL(string: "https://github.com/vicktor/nia_")!
-                    let text = NSMutableAttributedString(string: "Source / Código: github.com/vicktor/nia_ · MPL-2.0")
+                    let text = NSMutableAttributedString(string: NiaL10n.string("Source / Código: github.com/vicktor/nia_ · MPL-2.0"))
                     let range = (text.string as NSString).range(of: "github.com/vicktor/nia_")
                     text.addAttribute(.link, value: github, range: range)
                     NSApp.orderFrontStandardAboutPanel(options: [
@@ -470,7 +527,7 @@ private struct NiaWindowRoot: View {
                         .credits: text
                     ])
                 }
-                Button("Repositorio de nia_ en GitHub") {
+                Button(NiaL10n.string("Repositorio de nia_ en GitHub")) {
                     if let url = URL(string: "https://github.com/vicktor/nia_") {
                         NSWorkspace.shared.open(url)
                     }
@@ -478,19 +535,22 @@ private struct NiaWindowRoot: View {
             }
             SidebarCommands()
             CommandGroup(after: .newItem) {
-                Button("Mostrar/ocultar sesiones") {
+                Button(NiaL10n.string("Mostrar/ocultar sesiones")) {
                     if let model = focusedModel {
                         model.sidebarVisibility = model.sidebarVisibility == .detailOnly ? .all : .detailOnly
                     }
                 }.keyboardShortcut("b", modifiers: .command)
                 Divider()
                 ForEach(0..<9, id: \.self) { index in
-                    Button("Sesión \(index + 1)") { focusedModel?.selectSlot(index) }
+                    Button(String(format: NiaL10n.string("Sesión %d"), index + 1)) { focusedModel?.selectSlot(index) }
                         .keyboardShortcut(KeyEquivalent(Character(String(index+1))), modifiers: .command)
                 }
             }
         }
-        Settings { NiaSettings() }
+        Settings {
+            NiaSettings()
+                .environment(\.locale, language == "system" ? Locale.autoupdatingCurrent : Locale(identifier: language))
+        }
     }
 }
 
@@ -507,6 +567,7 @@ struct MainWindow: View {
     @State private var remoteName = ""
     @State private var remoteHost = ""
     @State private var filter = ""
+    @State private var showExitConfirmation = false
     @State private var draggingSession: String?
     @State private var dropTarget: String?
     @State private var dropAfter = false
@@ -582,7 +643,7 @@ struct MainWindow: View {
                                 }
                             ))
                             .contextMenu {
-                                Button(item.closed ? "Abrir sesión" : "Cambiar a sesión") { model.activate(item.id) }
+                                Button(LocalizedStringKey(item.closed ? "Abrir sesión" : "Cambiar a sesión")) { model.activate(item.id) }
                                 if item.remote_host != nil {
                                     Button("Reconectar SSH") { model.reconnectRemote(item.id) }
                                 }
@@ -685,6 +746,25 @@ struct MainWindow: View {
             .padding(22)
             .frame(width: 440)
         }
+        .onChange(of: model.pendingExitSession) { _, id in
+            showExitConfirmation = (id != nil)
+        }
+        .confirmationDialog(
+            "¿Finalizar esta sesión?",
+            isPresented: $showExitConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Finalizar sesión", role: .destructive) {
+                model.approvePendingExit()
+            }
+            Button("Cancelar", role: .cancel) {
+                model.cancelPendingExit()
+            }
+        } message: {
+            if let name = model.pendingExitSession {
+                Text(String(format: NiaL10n.string("La sesión «%@» sigue activa. ¿Quieres ejecutar exit y cerrarla?"), name))
+            }
+        }
         .sheet(item: $model.aiRequest, onDismiss: {
             model.showNextAIRequest()
         }) { query in
@@ -752,12 +832,20 @@ struct NiaSettings: View {
     }
 }
 struct GeneralSettings: View {
+    @AppStorage("nia.language") private var language = "system"
     @AppStorage("nia.restoreSessions") private var restore = true
     @AppStorage("nia.copyOnSelect") private var copy = true
+    @AppStorage("nia.confirmExit") private var confirmExit = true
     var body: some View {
         Form {
+            Picker("Idioma", selection: $language) {
+                Text("Automático (macOS)").tag("system")
+                Text("English").tag("en")
+                Text("Español").tag("es")
+            }
             Toggle("Restaurar sesiones al abrir Nia", isOn: $restore)
             Toggle("Copiar automáticamente al seleccionar", isOn: $copy)
+            Toggle("Preguntar antes de cerrar una sesión con exit", isOn: $confirmExit)
             Text("Los historiales siguen guardándose en la base de datos existente.")
                 .foregroundStyle(.secondary).font(.caption)
         }.formStyle(.grouped)

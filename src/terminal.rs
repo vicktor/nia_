@@ -12,6 +12,9 @@ pub struct LiveTerminal {
     pub history_indexer: HistoryIndexer,
     state_path: PathBuf,
     ai_request_path: Option<PathBuf>,
+    exit_request_path: Option<PathBuf>,
+    exit_approval_path: Option<PathBuf>,
+    pub exit_observed_polls: u8,
     pub _child: Box<dyn portable_pty::Child + Send + Sync>,
 }
 
@@ -79,7 +82,9 @@ impl LiveTerminal {
         let ai_request_path = if remote_host.is_none() && (shell.ends_with("/zsh") || shell == "zsh") {
             Some(session_base(&record.id)?.join("ai-request"))
         } else { None };
-        Ok(Self { state_path, ai_request_path, history_indexer: HistoryIndexer::default(), parser: vt100::Parser::new(NonZeroU16::new(rows).unwrap(), NonZeroU16::new(cols).unwrap(), scrollback_lines),
+        let exit_request_path = ai_request_path.as_ref().map(|_| session_base(&record.id).map(|p| p.join("exit-request"))).transpose()?;
+        let exit_approval_path = ai_request_path.as_ref().map(|_| session_base(&record.id).map(|p| p.join("exit-approved"))).transpose()?;
+        Ok(Self { state_path, ai_request_path, exit_request_path, exit_approval_path, exit_observed_polls: 0, history_indexer: HistoryIndexer::default(), parser: vt100::Parser::new(NonZeroU16::new(rows).unwrap(), NonZeroU16::new(cols).unwrap(), scrollback_lines),
             input: writer, master: pair.master, rx, _child: child })
     }
 
@@ -100,6 +105,32 @@ impl LiveTerminal {
         let question = content.trim().to_owned();
         if question.is_empty() { return Ok(None) }
         Ok(Some(question))
+    }
+
+    /// A local Zsh requested a protected exit without executing it yet.
+    pub fn take_exit_request(&self) -> Result<bool> {
+        let Some(path) = &self.exit_request_path else { return Ok(false) };
+        match fs::remove_file(path) {
+            Ok(()) => Ok(true),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// Permit exactly one exit from the normal ZLE accept-line widget.
+    pub fn approve_exit(&mut self) -> Result<()> {
+        let approval = self.exit_approval_path.clone()
+            .context("Exit interception is only supported in local Zsh")?;
+        fs::write(&approval, b"approved")?;
+        #[cfg(unix)] {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&approval, fs::Permissions::from_mode(0o600))?;
+        }
+        if let Err(e) = self.send(b"exit\r") {
+            let _ = fs::remove_file(&approval);
+            return Err(e);
+        }
+        Ok(())
     }
 
     pub fn snapshot_state(&self) -> Result<Option<(String, Option<String>)>> {
@@ -166,6 +197,8 @@ fn prepare_zsh_history(id: &str) -> Result<PathBuf> {
     }
     // A query left by a previous crashed process is not a new request.
     let _ = fs::remove_file(base.join("ai-request"));
+    let _ = fs::remove_file(base.join("exit-request"));
+    let _ = fs::remove_file(base.join("exit-approved"));
     let original_rc = original.join(".zshrc");
     let history = base.join("shell_history");
     // Create an owner-only history file, also protecting existing installations.
@@ -208,10 +241,27 @@ fn prepare_zsh_history(id: &str) -> Result<PathBuf> {
               return 0\n\
             fi\n\
           fi\n\
+          # Intercept only the literal exit/logout line, before the shell sees it.\n\
+          # The UI asks for consent and later creates a one-shot approval file.\n\
+          if [[ $BUFFER == exit || $BUFFER == logout ]]; then\n\
+            if [[ -f {4} ]]; then\n\
+              command rm -f -- {4}\n\
+              zle .accept-line\n\
+              return 0\n\
+            fi\n\
+            local tmp={5}.tmp.$$\n\
+            ( umask 077; print -r -- exit > \"$tmp\" )\n\
+            command mv -f -- \"$tmp\" {5}\n\
+            BUFFER=''\n\
+            CURSOR=0\n\
+            zle reset-prompt\n\
+            return 0\n\
+          fi\n\
           zle .accept-line\n\
         }}\n\
         zle -N accept-line _nia_ai_accept_line\n",
-        zsh_quote(&original_rc), zsh_quote(&history), zsh_quote(&base.join("state")), zsh_quote(&base.join("ai-request")));
+        zsh_quote(&original_rc), zsh_quote(&history), zsh_quote(&base.join("state")), zsh_quote(&base.join("ai-request")),
+        zsh_quote(&base.join("exit-approved")), zsh_quote(&base.join("exit-request")));
     fs::write(base.join(".zshrc"), content)?;
     Ok(base)
 }

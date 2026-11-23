@@ -12,6 +12,15 @@ nia_ is an **experimental native terminal for macOS** combining SwiftUI/AppKit c
 
 > **Development preview, not production-hardened.** Features such as remote sessions, ANSI reflow, and history restoration are still being validated. Back up your data before upgrading. No claims of audited security or measured resource savings are made.
 
+## Languages and session exit confirmation (v0.7.1)
+
+- nia_ is localized into **English and Spanish**, including menus, Settings, AI, model status, errors, and context actions.
+- Open **Settings → General → Language** to choose **Automatic (macOS)**, **English**, or **Spanish**. The choice is saved and does not change session IDs or histories.
+- **Ask before closing a session with exit** is enabled by default. When the local interactive Zsh prompt receives the exact command `exit` or `logout`, it pauses and asks for confirmation **before executing anything**.
+- Cancel leaves the shell running. Confirm sends the approved exit and removes the tab after the PTY has terminated and its final output is stored; session history remains available for future reopening.
+- If a program terminates on its own, nia_ cannot prevent that exit, but removes the completed local shell tab once its output has been saved.
+- The guarded `exit` hook currently applies to **local Zsh**, not Bash, Fish, remote SSH shells, or program-specific internal exit commands.
+
 ## Multi-window workspaces (experimental)
 
 - **⌘N** (File → New Window) opens an independent native nia_ window.

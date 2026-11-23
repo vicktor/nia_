@@ -21,6 +21,7 @@ pub struct NiaCore {
     scrollback_lines: usize,
     disk_scroll: HashMap<String, DiskScroll>,
     ai_queries: Vec<AIQuery>,
+    exit_requests: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -54,6 +55,11 @@ impl NiaCore {
     fn refresh(&mut self) {
         // Keep sessions alive even when they aren't visible.
         for (id, term) in &mut self.live {
+            match term.take_exit_request() {
+                Ok(true) => self.exit_requests.push(id.clone()),
+                Ok(false) => {},
+                Err(error) => self.last_error = format!("Exit request: {error}"),
+            }
             match term.take_ai_request() {
                 Ok(Some(question)) => self.ai_queries.push(AIQuery { session_id: id.clone(), question }),
                 Ok(None) => {},
@@ -71,9 +77,19 @@ impl NiaCore {
                 }
             }
             let mut chunk = Vec::new();
-            while let Ok(bytes) = term.rx.try_recv() {
-                chunk.extend_from_slice(&bytes);
-                if chunk.len() >= 128 * 1024 { break; }
+            let mut reader_drained = false;
+            loop {
+                match term.rx.try_recv() {
+                    Ok(bytes) => {
+                        chunk.extend_from_slice(&bytes);
+                        if chunk.len() >= 128 * 1024 { break; }
+                    },
+                    Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                        reader_drained = true;
+                        break;
+                    },
+                }
             }
             if !chunk.is_empty() {
                 match self.store.log_file(id).and_then(|mut f| Store::append_and_sync(&mut f, &chunk)) {
@@ -87,6 +103,30 @@ impl NiaCore {
                     Err(e) => self.last_error = e.to_string(),
                 }
             }
+            // A process that has actually exited cannot be vetoed. Wait a few
+            // polling cycles to flush its last PTY output before archiving.
+            if reader_drained && self.store.remote_host(id).ok().flatten().is_none() {
+                match term._child.try_wait() {
+                    Ok(Some(_)) => term.exit_observed_polls = 3,
+                    Ok(None) => term.exit_observed_polls = 0,
+                    Err(error) => self.last_error = format!("PTY wait: {error}"),
+                }
+            }
+        }
+        let exited: Vec<_> = self.live.iter()
+            .filter(|(_, t)| t.exit_observed_polls >= 3)
+            .map(|(id, _)| id.clone()).collect();
+        for id in exited {
+            if let Err(e) = self.store.close(&id) {
+                self.last_error = e.to_string();
+                continue;
+            }
+            if let Some(record) = self.records.iter_mut().find(|r| r.id == id) {
+                record.closed = true;
+            }
+            self.live.remove(&id);
+            self.disk_scroll.remove(&id);
+            self.exit_requests.retain(|pending| pending != &id);
         }
     }
     fn open(&mut self, id: &str) -> Result<(), String> {
@@ -113,7 +153,7 @@ impl NiaCore {
 #[no_mangle]
 pub extern "C" fn nia_core_new() -> *mut NiaCore {
     match Store::open().and_then(|store| { let records = store.list()?; Ok((store, records)) }) {
-        Ok((store, records)) => Box::into_raw(Box::new(NiaCore { store, records, live: HashMap::new(), last_error: String::new(), scrollback_lines: 10000, disk_scroll: HashMap::new(), ai_queries: Vec::new() })),
+        Ok((store, records)) => Box::into_raw(Box::new(NiaCore { store, records, live: HashMap::new(), last_error: String::new(), scrollback_lines: 10000, disk_scroll: HashMap::new(), ai_queries: Vec::new(), exit_requests: Vec::new() })),
         Err(e) => { eprintln!("Nia storage initialization failed: {e:#}"); ptr::null_mut() }
     }
 }
@@ -136,6 +176,29 @@ pub unsafe extern "C" fn nia_take_ai_queries(p: *mut NiaCore) -> *mut c_char {
     if p.is_null() { return to_c("[]") }
     let core = &mut *p;
     json(&std::mem::take(&mut core.ai_queries))
+}
+
+/// Drain exit requests from local Zsh; the command has not been run.
+#[no_mangle]
+pub unsafe extern "C" fn nia_take_exit_requests(p: *mut NiaCore) -> *mut c_char {
+    if p.is_null() { return to_c("[]"); }
+    let core = &mut *p;
+    json(&std::mem::take(&mut core.exit_requests))
+}
+
+/// Authorize and run exactly one intercepted exit line.
+#[no_mangle]
+pub unsafe extern "C" fn nia_confirm_exit(p: *mut NiaCore, name: *const c_char) -> c_int {
+    if p.is_null() { return -1; }
+    let core = &mut *p;
+    let id = match text_arg(name) { Ok(s) => s, Err(e) => return core.set_error(e) };
+    match core.live.get_mut(id) {
+        Some(term) => match term.approve_exit() {
+            Ok(()) => 0,
+            Err(e) => core.set_error(e),
+        },
+        None => core.set_error("Session is not running"),
+    }
 }
 
 #[no_mangle]
