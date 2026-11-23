@@ -72,6 +72,13 @@ Zsh local emite una marca invisible **OSC 133** al iniciar cada comando. El inde
 - La navegación usa el scrollback textual indexado: una TUI a pantalla completa no puede reconstruirse píxel a píxel desde texto plano.
 - La PTY, Zsh, recuperación de agentes y barra superior no cambian.
 
+## Corrección: altura completa y navegación a comandos
+
+- Revalidamos filas y columnas de la PTY después de cada actualización de SwiftUI de la vista Metal; una rejilla antigua de 30 filas no debe dejar la parte inferior de la ventana sin usar.
+- Conservamos la posición de historial indexado al redimensionar la PTY: cerrar el panel de comandos ya no debe devolvernos al final.
+- Incluimos la línea del comando anterior a la marca OSC 133, para que **Ver salida** muestre también el comando original si está en el índice.
+- No se modifica la recuperación de Claude/Zsh ni la barra de título nativa.
+
 ## Características
 
 | Área | Funcionalidades actuales | Limitaciones |
