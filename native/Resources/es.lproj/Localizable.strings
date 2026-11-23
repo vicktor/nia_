@@ -188,4 +188,9 @@
 "Session name must be 1–96 bytes without slashes or controls" = "El nombre debe tener entre 1 y 96 bytes, sin barras ni controles";
 "Ver salida" = "Ver salida";
 "Ir al resultado de este comando" = "Ir al resultado de este comando";
-"Sin marca de navegación: vuelve a ejecutar el comando" = "Sin marca de navegación: vuelve a ejecutar el comando";
+"Esta ejecución no tiene marca de navegación" = "Esta ejecución no tiene marca de navegación";
+"Cannot repair history: original terminal log is unavailable" = "No se puede reparar el historial: el registro original de la terminal no está disponible";
+"Cannot repair history: original terminal log is not a file" = "No se puede reparar el historial: el registro original de la terminal no es un archivo";
+"Cannot repair history: original terminal log is empty" = "No se puede reparar el historial: el registro original de la terminal está vacío";
+"Terminal log changed while repairing history" = "El registro de la terminal cambió durante la reparación del historial";
+"The original command line is not available in the retained terminal history" = "La línea original del comando no está disponible en el historial conservado de la terminal";

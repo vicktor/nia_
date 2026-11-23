@@ -2,6 +2,9 @@
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 use std::{fs::{self, File, OpenOptions}, io::{Read, Write}, path::PathBuf};
+use crate::history::HistoryIndexer;
+
+const HISTORY_INDEX_VERSION: i64 = 2;
 
 #[derive(Debug, Clone)]
 pub struct SessionRecord {
@@ -30,7 +33,13 @@ pub struct Store {
 
 impl Store {
     pub fn open() -> Result<Self> {
-        let base = dirs::data_local_dir().context("no local data directory")?.join("ember-terminal");
+        let base = dirs::data_local_dir()
+            .context("no local data directory")?
+            .join("ember-terminal");
+        Self::open_at(base)
+    }
+
+    fn open_at(base: PathBuf) -> Result<Self> {
         fs::create_dir_all(base.join("logs"))?;
         let conn = Connection::open(base.join("sessions.sqlite3"))?;
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;
@@ -81,6 +90,10 @@ impl Store {
               line_no INTEGER NOT NULL,
               PRIMARY KEY(session_id, started_at)
             ) WITHOUT ROWID;
+            CREATE TABLE IF NOT EXISTS history_index_versions (
+              session_id TEXT PRIMARY KEY,
+              version INTEGER NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS preferences (
               key TEXT PRIMARY KEY, value TEXT NOT NULL
             );
@@ -103,6 +116,11 @@ impl Store {
             conn.execute_batch("ALTER TABLE sessions ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0; UPDATE sessions SET sort_order=rowid;")?;
         }
         Ok(Self { conn, home: base })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn for_tests(base: PathBuf) -> Result<Self> {
+        Self::open_at(base)
     }
 
     pub fn remote_host(&self, id: &str) -> Result<Option<String>> {
@@ -295,7 +313,7 @@ impl Store {
     }
 
     // Internal path names are not derived directly from user input.
-    fn log_path(&self, id: &str) -> PathBuf {
+    pub(crate) fn log_path(&self, id: &str) -> PathBuf {
         let mut key = String::with_capacity(id.len() * 2);
         for b in id.bytes() { key.push_str(&format!("{b:02x}")); }
         self.home.join("logs").join(format!("{key}.bin"))
@@ -397,54 +415,478 @@ impl Store {
         Ok(())
     }
 
-    /// Count readable lines AFTER an explicit marker; its output can be
-    /// positioned at the top of a viewport by paging back from the end.
-    pub fn readable_lines_since_command(&self, session: &str, mark_id: i64) -> Result<Option<u64>> {
-        let line: Option<i64> = self.conn.query_row(
-            "SELECT a.line_no FROM command_marks m
-             JOIN command_anchors a ON a.session_id=m.session_id AND a.started_at=m.started_at
-             WHERE m.session_id=?1 AND m.id=?2",
-            params![session,mark_id], |r| r.get(0)
-        ).optional()?;
-        let Some(line) = line else { return Ok(None) };
-        let count: i64 = self.conn.query_row(
-            // The OSC marker is emitted at preexec, *after* the shell has
-            // echoed the command line. Include its preceding indexed line so
-            // navigation lands on the original command rather than only output.
-            "SELECT COUNT(*) FROM history_lines
-             WHERE session_id=?1 AND line_no>=?2 AND TRIM(text)<>''",
-            params![session,line.saturating_sub(1)], |r| r.get(0)
-        )?;
-        Ok(Some(count.max(0) as u64))
+    /// Repair the old CRLF-erasing index only when a session's history is used.
+    /// Derived rows and their version change atomically; command IDs and the
+    /// original byte log never change. The returned parser retains the partial
+    /// last line/escape so a live session can continue at this exact log boundary.
+    pub fn ensure_history_index(&mut self, session: &str) -> Result<Option<HistoryIndexer>> {
+        let version: Option<i64> = self
+            .conn
+            .query_row(
+                "SELECT version FROM history_index_versions WHERE session_id=?1",
+                [session],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if version.is_some_and(|version| version >= HISTORY_INDEX_VERSION) {
+            return Ok(None);
+        }
+
+        // A new PTY has no log until its first output is flushed. Leave that
+        // session unversioned so its first real history use can still repair.
+        // Missing/empty raw data must never erase an existing derived index.
+        let mut log = match File::open(self.log_path(session)) {
+            Ok(log) => log,
+            Err(error)
+                if error.kind() == std::io::ErrorKind::NotFound
+                    && !self.has_history_index_data(session)? =>
+            {
+                return Ok(None)
+            }
+            Err(error) => {
+                return Err(error)
+                    .context("Cannot repair history: original terminal log is unavailable")
+            }
+        };
+        let metadata = log.metadata()?;
+        anyhow::ensure!(
+            metadata.is_file(),
+            "Cannot repair history: original terminal log is not a file"
+        );
+        let remaining = metadata.len();
+        if remaining == 0 {
+            anyhow::ensure!(
+                !self.has_history_index_data(session)?,
+                "Cannot repair history: original terminal log is empty"
+            );
+            return Ok(None);
+        }
+        self.rebuild_history_index(session, &mut log, remaining)
+            .map(Some)
     }
 
-    /// Count non-empty transcript lines, excluding terminal progress/blank-only rows.
-    /// This is an index of readable output, not a pixel-perfect VT replay.
+    fn has_history_index_data(&self, session: &str) -> Result<bool> {
+        self.conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM history_lines WHERE session_id=?1)
+                 OR EXISTS(SELECT 1 FROM command_anchors WHERE session_id=?1)
+                 OR EXISTS(SELECT 1 FROM history_counters WHERE session_id=?1)",
+                [session],
+                |row| row.get(0),
+            )
+            .map_err(Into::into)
+    }
+
+    fn rebuild_history_index(
+        &mut self,
+        session: &str,
+        log: &mut impl Read,
+        mut remaining: u64,
+    ) -> Result<HistoryIndexer> {
+        let tx = self.conn.transaction()?;
+        tx.execute("DELETE FROM history_lines WHERE session_id=?1", [session])?;
+        tx.execute("DELETE FROM command_anchors WHERE session_id=?1", [session])?;
+        let mut indexer = HistoryIndexer::default();
+        let mut next_line: i64 = 0;
+        {
+            let mut insert_line =
+                tx.prepare("INSERT INTO history_lines(session_id,line_no,text) VALUES(?1,?2,?3)")?;
+            let mut insert_anchor = tx.prepare("INSERT OR IGNORE INTO command_anchors(session_id,started_at,line_no) VALUES(?1,?2,?3)")?;
+            let mut chunk = [0u8; 64 * 1024];
+            while remaining > 0 {
+                let wanted = remaining.min(chunk.len() as u64) as usize;
+                let count = log.read(&mut chunk[..wanted])?;
+                anyhow::ensure!(count > 0, "Terminal log changed while repairing history");
+                remaining -= count as u64;
+                let lines = indexer.ingest(&chunk[..count]);
+                let anchors = indexer.take_anchors();
+                for (offset, line) in lines.iter().enumerate() {
+                    insert_line.execute(params![session, next_line + offset as i64, line])?;
+                }
+                for (started, offset) in anchors {
+                    insert_anchor.execute(params![session, started, next_line + offset as i64])?;
+                }
+                next_line += lines.len() as i64;
+            }
+        }
+        tx.execute("INSERT INTO history_counters(session_id,next_line) VALUES(?1,?2) ON CONFLICT(session_id) DO UPDATE SET next_line=excluded.next_line", params![session,next_line])?;
+        tx.execute("INSERT INTO history_index_versions(session_id,version) VALUES(?1,?2) ON CONFLICT(session_id) DO UPDATE SET version=excluded.version", params![session,HISTORY_INDEX_VERSION])?;
+        tx.commit()?;
+        Ok(indexer)
+    }
+
+    /// OSC 133 C is emitted after the echoed command. Find that preceding
+    /// readable row directly, without converting it to an offset from the end.
+    pub fn command_start_line(&self, session: &str, mark_id: i64) -> Result<Option<i64>> {
+        let line: Option<i64> = self
+            .conn
+            .query_row(
+                "SELECT a.line_no FROM command_marks m
+             JOIN command_anchors a ON a.session_id=m.session_id AND a.started_at=m.started_at
+             WHERE m.session_id=?1 AND m.id=?2",
+                params![session, mark_id],
+                |r| r.get(0),
+            )
+            .optional()?;
+        let Some(line) = line else { return Ok(None) };
+        self.conn.query_row(
+            "SELECT line_no FROM history_lines WHERE session_id=?1 AND line_no<?2 AND TRIM(text)<>'' ORDER BY line_no DESC LIMIT 1",
+            params![session,line], |row| row.get(0)
+        ).optional().map_err(Into::into)
+    }
+
+    #[cfg(test)]
     pub fn history_visible_count(&self, id: &str) -> Result<u64> {
         let total: i64 = self.conn.query_row(
             "SELECT COUNT(*) FROM history_lines WHERE session_id=?1 AND TRIM(text) <> ''",
-            [id], |row| row.get(0))?;
+            [id],
+            |row| row.get(0),
+        )?;
         Ok(total.max(0) as u64)
     }
 
-    /// Return at most one viewport of non-blank rows, oldest to newest.
-    /// We intentionally clamp OFFSET before reading so scrolling past the oldest
-    /// available text cannot turn the view into a screen full of empty cells.
-    pub fn history_visible_page(&self, id: &str, lines_from_end: u64, count: usize) -> Result<Vec<String>> {
-        let count = count.clamp(1, 300);
-        let offset = lines_from_end;
+    /// Keyset paging keeps the chosen top row fixed while new output arrives
+    /// and the viewport changes. No transcript-wide count is needed to render.
+    pub fn history_page_from(
+        &self,
+        id: &str,
+        first_line: i64,
+        count: usize,
+    ) -> Result<Vec<String>> {
+        let count = count.clamp(1, u16::MAX as usize);
         let mut stmt = self.conn.prepare(
-            "SELECT text FROM history_lines WHERE session_id=?1 AND TRIM(text) <> '' \
-             ORDER BY line_no DESC LIMIT ?2 OFFSET ?3")?;
-        let mut items = stmt.query_map(params![id, count as i64, offset as i64],
-            |row| row.get::<_,String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
-        items.reverse();
+            "SELECT text FROM history_lines WHERE session_id=?1 AND line_no>=?2 AND TRIM(text) <> '' \
+             ORDER BY line_no ASC LIMIT ?3")?;
+        let items = stmt
+            .query_map(params![id, first_line, count as i64], |row| {
+                row.get::<_, String>(0)
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(items)
+    }
+
+    fn history_first_line(&self, id: &str) -> Result<Option<i64>> {
+        self.conn.query_row("SELECT line_no FROM history_lines WHERE session_id=?1 AND TRIM(text)<>'' ORDER BY line_no ASC LIMIT 1",
+            [id], |row| row.get(0)).optional().map_err(Into::into)
+    }
+
+    /// Used only when entering disk history or explicitly scrolling, not per frame.
+    pub fn history_top_from_end(
+        &self,
+        id: &str,
+        lines_from_end: u64,
+        height: usize,
+    ) -> Result<Option<i64>> {
+        let offset = lines_from_end
+            .saturating_add(height.saturating_sub(1) as u64)
+            .min(i64::MAX as u64) as i64;
+        let top: Option<i64> = self.conn.query_row(
+            "SELECT line_no FROM history_lines WHERE session_id=?1 AND TRIM(text)<>'' ORDER BY line_no DESC LIMIT 1 OFFSET ?2",
+            params![id,offset], |row| row.get(0)
+        ).optional()?;
+        if top.is_some() {
+            Ok(top)
+        } else {
+            self.history_first_line(id)
+        }
+    }
+
+    /// None means an intentional downward scroll reached the live viewport.
+    pub fn history_scroll_top(
+        &self,
+        id: &str,
+        first_line: i64,
+        delta: i32,
+        height: usize,
+    ) -> Result<Option<i64>> {
+        if delta == 0 {
+            return Ok(Some(first_line));
+        }
+        let steps = delta.unsigned_abs() as i64;
+        if delta > 0 {
+            let top: Option<i64> = self.conn.query_row(
+                "SELECT line_no FROM history_lines WHERE session_id=?1 AND line_no<?2 AND TRIM(text)<>'' ORDER BY line_no DESC LIMIT 1 OFFSET ?3",
+                params![id,first_line,steps-1], |row| row.get(0)
+            ).optional()?;
+            Ok(Some(
+                top.or(self
+                    .history_first_line(id)?
+                    .filter(|line| *line <= first_line))
+                    .unwrap_or(first_line),
+            ))
+        } else {
+            let live_top = self.history_top_from_end(id, 0, height)?;
+            let top: Option<i64> = self.conn.query_row(
+                "SELECT line_no FROM history_lines WHERE session_id=?1 AND line_no>?2 AND TRIM(text)<>'' ORDER BY line_no ASC LIMIT 1 OFFSET ?3",
+                params![id,first_line,steps-1], |row| row.get(0)
+            ).optional()?;
+            Ok(top.filter(|top| live_top.is_some_and(|live_top| *top < live_top)))
+        }
     }
 
     pub fn append_and_sync(file: &mut File, data: &[u8]) -> Result<()> {
         file.write_all(data)?;
         file.sync_data()?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod history_navigation_tests {
+    use super::*;
+
+    fn legacy_store() -> (tempfile::TempDir, Store, i64) {
+        let temp = tempfile::tempdir().unwrap();
+        let mut store = Store::for_tests(temp.path().to_path_buf()).unwrap();
+        store
+            .append_command_marks("A", &[(1000.5, 1, 0, "/tmp".into(), "echo result".into())])
+            .unwrap();
+        store
+            .append_history_lines("A", &["".into(), "".into()], &[(1000.5, 1)])
+            .unwrap();
+        let mark_id = store.recent_command_marks("A", 1).unwrap()[0].id;
+        (temp, store, mark_id)
+    }
+
+    fn raw_log(store: &Store, session: &str, bytes: &[u8]) {
+        Store::append_and_sync(&mut store.log_file(session).unwrap(), bytes).unwrap();
+    }
+
+    #[test]
+    fn legacy_repair_preserves_command_ids_other_sessions_and_partial_tail() {
+        let (_temp, mut store, mark_id) = legacy_store();
+        store
+            .append_history_lines("B", &["untouched".into()], &[(2000.0, 0)])
+            .unwrap();
+        raw_log(
+            &store,
+            "A",
+            b"$ echo result\r\n\x1b]133;C;1000.5\x07result\r\npartial\r",
+        );
+        let mut indexer = store.ensure_history_index("A").unwrap().unwrap();
+        assert_eq!(store.command_start_line("A", mark_id).unwrap(), Some(0));
+        assert_eq!(
+            store.history_page_from("A", 0, 10).unwrap(),
+            ["$ echo result", "result"]
+        );
+        assert_eq!(store.history_page_from("B", 0, 10).unwrap(), ["untouched"]);
+        assert_eq!(store.recent_command_marks("A", 1).unwrap()[0].id, mark_id);
+        assert!(store.recent_command_marks("A", 1).unwrap()[0].has_anchor);
+        let continuation = b"\n\x1b]133;C;1001.5\x07next\r\n";
+        raw_log(&store, "A", continuation);
+        let lines = indexer.ingest(continuation);
+        store
+            .append_history_lines("A", &lines, &indexer.take_anchors())
+            .unwrap();
+        assert_eq!(
+            store.history_page_from("A", 0, 10).unwrap(),
+            ["$ echo result", "result", "partial", "next"]
+        );
+        let next: i64 = store
+            .conn
+            .query_row(
+                "SELECT next_line FROM history_counters WHERE session_id='A'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(next, 4);
+        assert!(
+            store.ensure_history_index("A").unwrap().is_none(),
+            "repair is versioned, not repeated"
+        );
+    }
+
+    #[test]
+    fn missing_empty_or_nonfile_logs_never_erase_existing_index() {
+        let (_temp, mut store, mark_id) = legacy_store();
+        assert!(store.ensure_history_index("A").is_err());
+        fs::create_dir(store.log_path("A")).unwrap();
+        assert!(store.ensure_history_index("A").is_err());
+        fs::remove_dir(store.log_path("A")).unwrap();
+        File::create(store.log_path("A")).unwrap();
+        assert!(store.ensure_history_index("A").is_err());
+        let count: i64 = store
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM history_lines WHERE session_id='A'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let next: i64 = store
+            .conn
+            .query_row(
+                "SELECT next_line FROM history_counters WHERE session_id='A'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!((count, next), (2, 2));
+        assert_eq!(store.recent_command_marks("A", 1).unwrap()[0].id, mark_id);
+        assert!(store.recent_command_marks("A", 1).unwrap()[0].has_anchor);
+        let versions: i64 = store
+            .conn
+            .query_row("SELECT COUNT(*) FROM history_index_versions", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(versions, 0);
+    }
+
+    #[test]
+    fn fresh_session_waits_for_output_before_versioning_the_index() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut store = Store::for_tests(temp.path().to_path_buf()).unwrap();
+        assert!(store.ensure_history_index("new").unwrap().is_none());
+        File::create(store.log_path("new")).unwrap();
+        assert!(store.ensure_history_index("new").unwrap().is_none());
+        let versions: i64 = store
+            .conn
+            .query_row("SELECT COUNT(*) FROM history_index_versions", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(versions, 0);
+        raw_log(&store, "new", b"first output\r\n");
+        assert!(store.ensure_history_index("new").unwrap().is_some());
+        assert_eq!(
+            store.history_page_from("new", 0, 10).unwrap(),
+            ["first output"]
+        );
+    }
+
+    #[test]
+    fn missing_or_empty_log_preserves_anchor_and_counter_only_indexes() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut store = Store::for_tests(temp.path().to_path_buf()).unwrap();
+        store
+            .append_history_lines("anchor", &[], &[(1000.5, 0)])
+            .unwrap();
+        store
+            .conn
+            .execute(
+                "INSERT INTO history_counters(session_id,next_line) VALUES('counter',0)",
+                [],
+            )
+            .unwrap();
+        for session in ["anchor", "counter"] {
+            assert!(store.ensure_history_index(session).is_err());
+            File::create(store.log_path(session)).unwrap();
+            assert!(store.ensure_history_index(session).is_err());
+        }
+        let anchors: i64 = store
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM command_anchors WHERE session_id='anchor'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let counters: i64 = store
+            .conn
+            .query_row("SELECT COUNT(*) FROM history_counters", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        let versions: i64 = store
+            .conn
+            .query_row("SELECT COUNT(*) FROM history_index_versions", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!((anchors, counters, versions), (1, 2, 0));
+    }
+
+    #[test]
+    fn read_failure_after_first_rebuilt_chunk_rolls_back_all_derived_rows() {
+        struct FailingRead {
+            first: Option<Vec<u8>>,
+        }
+        impl Read for FailingRead {
+            fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+                if let Some(bytes) = self.first.take() {
+                    buffer[..bytes.len()].copy_from_slice(&bytes);
+                    Ok(bytes.len())
+                } else {
+                    Err(std::io::Error::other("injected disk error"))
+                }
+            }
+        }
+        let (_temp, mut store, mark_id) = legacy_store();
+        let chunk = b"replacement\r\n\x1b]133;C;2000\x07".to_vec();
+        let length = chunk.len() as u64 + 1;
+        let mut reader = FailingRead { first: Some(chunk) };
+        assert!(store
+            .rebuild_history_index("A", &mut reader, length)
+            .is_err());
+        let rows: Vec<String> = store
+            .conn
+            .prepare("SELECT text FROM history_lines WHERE session_id='A' ORDER BY line_no")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert_eq!(rows, ["", ""]);
+        let next: i64 = store
+            .conn
+            .query_row(
+                "SELECT next_line FROM history_counters WHERE session_id='A'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let anchor: i64 = store
+            .conn
+            .query_row(
+                "SELECT line_no FROM command_anchors WHERE session_id='A' AND started_at=1000.5",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!((next, anchor), (2, 1));
+        assert_eq!(store.recent_command_marks("A", 1).unwrap()[0].id, mark_id);
+        assert!(store
+            .conn
+            .query_row(
+                "SELECT version FROM history_index_versions WHERE session_id='A'",
+                [],
+                |row| row.get::<_, i64>(0)
+            )
+            .optional()
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn repair_streams_more_than_one_chunk_and_keeps_absolute_page_position() {
+        let (_temp, mut store, mark_id) = legacy_store();
+        let mut raw = String::from("$ echo result\r\n\x1b]133;C;1000.5\x07");
+        for line in 0..10_000 {
+            raw.push_str(&format!("output {line}\r\n"));
+        }
+        raw_log(&store, "A", raw.as_bytes());
+        let mut indexer = store.ensure_history_index("A").unwrap().unwrap();
+        assert_eq!(store.history_visible_count("A").unwrap(), 10_001);
+        let top = store.command_start_line("A", mark_id).unwrap().unwrap();
+        let before = store.history_page_from("A", top, 3).unwrap();
+        assert_eq!(before, ["$ echo result", "output 0", "output 1"]);
+        let added = indexer.ingest(b"new output\r\n");
+        store
+            .append_history_lines("A", &added, &indexer.take_anchors())
+            .unwrap();
+        assert_eq!(store.history_page_from("A", top, 3).unwrap(), before);
+        assert_eq!(store.history_page_from("A", top, 20).unwrap()[0], before[0]);
+        assert_eq!(store.history_scroll_top("A", 5, 2, 20).unwrap(), Some(3));
+        assert_eq!(
+            store.history_scroll_top("A", 5, i32::MAX, 20).unwrap(),
+            Some(0)
+        );
+        assert_eq!(store.history_scroll_top("A", 5, -2, 20).unwrap(), Some(7));
+        assert_eq!(
+            store.history_scroll_top("A", 5, i32::MIN, 20).unwrap(),
+            None
+        );
     }
 }
