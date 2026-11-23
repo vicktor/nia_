@@ -713,16 +713,32 @@ struct MainWindow: View {
         .navigationTitle(model.selected ?? "nia_")
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
-                Picker("Dividir terminal", selection: Binding(
-                    get: { model.splitMode }, set: { model.setSplit($0) }
-                )) {
-                    Label("Una sesión", systemImage: "rectangle").tag("off")
-                    Label("Lado a lado", systemImage: "rectangle.split.2x1").tag("vertical")
-                    Label("Arriba y abajo", systemImage: "rectangle.split.1x2").tag("horizontal")
+                // A wide menu-style Picker gets promoted to an oversized
+                // Liquid Glass capsule in macOS light appearance. A native
+                // icon-only Menu has fixed intrinsic size in both themes.
+                Menu {
+                    Button {
+                        model.setSplit("off")
+                    } label: {
+                        Label("Una sesión", systemImage: "rectangle")
+                    }
+                    Button {
+                        model.setSplit("vertical")
+                    } label: {
+                        Label("Lado a lado", systemImage: "rectangle.split.2x1")
+                    }
+                    Button {
+                        model.setSplit("horizontal")
+                    } label: {
+                        Label("Arriba y abajo", systemImage: "rectangle.split.1x2")
+                    }
+                } label: {
+                    Image(systemName: model.splitMode == "vertical"
+                        ? "rectangle.split.2x1"
+                        : model.splitMode == "horizontal"
+                            ? "rectangle.split.1x2" : "rectangle")
                 }
-                .labelsHidden()
-                .pickerStyle(.menu)
-                .frame(width: 150)
+                .menuStyle(.borderlessButton)
                 .help("Disposición de terminales")
             }
         }
@@ -1050,6 +1066,9 @@ private final class NiaTransparencyHost: NSView {
         guard let window else { return }
         let transparent = requestedOpacity < 0.999
         window.titlebarAppearsTransparent = false
+        // Keep standard toolbar controls compact, including the system
+        // sidebar toggle. macOS may otherwise use tall glass capsules.
+        window.toolbarStyle = .unifiedCompact
         window.styleMask.remove(.fullSizeContentView)
         window.isOpaque = !transparent
         window.backgroundColor = transparent ? .clear : .windowBackgroundColor

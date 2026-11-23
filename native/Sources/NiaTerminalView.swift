@@ -162,7 +162,16 @@ final class NiaMetalView: MTKView, MTKViewDelegate {
         currentRevision = revision
         terminalFrame = frame
     }
-    private var terminalFrame: ScreenSnapshot? { didSet { needsDisplay = true } }
+    private var terminalFrame: ScreenSnapshot? {
+        didSet {
+            if hoveredLink != nil {
+                hoveredLink = nil
+                lastHoverCell = nil
+                NSCursor.arrow.set()
+            }
+            needsDisplay = true
+        }
+    }
     var copyOnSelection = true
     var cursorBlink = true
     var cursorShape = "bar"
@@ -182,6 +191,16 @@ final class NiaMetalView: MTKView, MTKViewDelegate {
     private var selectionStart: (Int, Int)?
     private var selectionEnd: (Int, Int)?
     private var mouseDownPoint: NSPoint?
+    // Link highlighting only runs on pointer movement, never during PTY polling.
+    private struct HoveredLink {
+        let url: URL
+        let row: Int
+        let firstColumn: Int
+        let lastColumn: Int
+    }
+    private var hoveredLink: HoveredLink?
+    private var lastHoverCell: (Int, Int)?
+    private var mouseTrackingArea: NSTrackingArea?
     // Escape is delayed very briefly so two presses can clear the editable shell line.
     // Single Escape remains available for vim, completion menus and other TUI apps.
     private var pendingEscape: DispatchWorkItem?
@@ -220,6 +239,51 @@ final class NiaMetalView: MTKView, MTKViewDelegate {
         rebuildAtlas()
     }
     required init(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let mouseTrackingArea { removeTrackingArea(mouseTrackingArea) }
+        let area = NSTrackingArea(rect: .zero,
+            options: [.mouseMoved, .mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+            owner: self, userInfo: nil)
+        addTrackingArea(area)
+        mouseTrackingArea = area
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        updateLinkHover(at: convert(event.locationInWindow, from: nil))
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        updateLinkHover(at: convert(event.locationInWindow, from: nil))
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        lastHoverCell = nil
+        if hoveredLink != nil { hoveredLink = nil; needsDisplay = true }
+        NSCursor.arrow.set()
+    }
+
+    private func updateLinkHover(at point: NSPoint) {
+        guard bounds.contains(point) else {
+            lastHoverCell = nil
+            if hoveredLink != nil { hoveredLink = nil; needsDisplay = true }
+            NSCursor.arrow.set()
+            return
+        }
+        let location = cell(at: point)
+        if let old = lastHoverCell, old == location { return }
+        lastHoverCell = location
+        let candidate = webLink(at: location)
+        let changed = candidate?.url != hoveredLink?.url ||
+            candidate?.row != hoveredLink?.row ||
+            candidate?.firstColumn != hoveredLink?.firstColumn ||
+            candidate?.lastColumn != hoveredLink?.lastColumn
+        hoveredLink = candidate
+        if candidate != nil { NSCursor.pointingHand.set() }
+        else { NSCursor.arrow.set() }
+        if changed { needsDisplay = true }
+    }
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
@@ -312,6 +376,14 @@ final class NiaMetalView: MTKView, MTKViewDelegate {
                     var back = palette(cell.bg, foreground: false, dark: dark)
                     if cell.flags & 16 != 0 { swap(&front,&back) }
                     if cell.flags & 2 != 0 { front.w *= 0.55 }
+                    let hovering = hoveredLink.map { link in
+                        r == link.row && c >= link.firstColumn && c <= link.lastColumn
+                    } ?? false
+                    if hovering {
+                        // Accent-colored underline signals the click target.
+                        // Only draw these two quads on the hovered text cells.
+                        front = dark ? SIMD4(0.49,0.73,1.0,1.0) : SIMD4(0.10,0.37,0.83,1.0)
+                    }
                     if selectionContains(r,c) { back = SIMD4(0.31,0.49,0.76,1) }
                     if cell.bg != -1 || cell.flags & 16 != 0 || selectionContains(r,c) {
                         quad(&bg,x:x,y:y,w:cw,h:ch,uv:nil,color:back)
@@ -321,7 +393,9 @@ final class NiaMetalView: MTKView, MTKViewDelegate {
                             quad(&fg,x:x,y:y,w:cell.wide ? cw*2 : cw,h:ch,uv:u,color:front)
                         }
                     }
-                    if cell.flags & 8 != 0 { quad(&fg,x:x,y:y+ch-2,w:cw,h:1.5,uv:nil,color:front) }
+                    if cell.flags & 8 != 0 || hovering {
+                        quad(&fg,x:x,y:y+ch-2,w:cw,h:1.5,uv:nil,color:front)
+                    }
                 }
             }
             if f.scrollback_offset == 0 && f.cursor_visible && (phase || !cursorBlink) {
@@ -386,12 +460,14 @@ final class NiaMetalView: MTKView, MTKViewDelegate {
     private var contextualURL: URL?
 
     private func webURL(at location: (Int, Int)) -> URL? {
+        webLink(at: location)?.url
+    }
+
+    private func webLink(at location: (Int, Int)) -> HoveredLink? {
         guard let frame = terminalFrame,
               frame.cells.indices.contains(location.0),
               frame.cells[location.0].indices.contains(location.1) else { return nil }
         let cells = frame.cells[location.0]
-        // Build a mapping from UTF-16 offsets to actual terminal columns.
-        // Wide glyph continuation cells don't occupy text space.
         var value = ""
         var columns: [Int] = []
         for (column, cell) in cells.enumerated() {
@@ -411,23 +487,21 @@ final class NiaMetalView: MTKView, MTKViewDelegate {
             guard first < columns.count, last <= columns.count,
                   columns[first] <= location.1,
                   location.1 <= columns[last - 1] else { continue }
-            // Punctuation commonly follows terminal links but isn't part of URL.
             var candidate = ns.substring(with: match.range)
             while let lastChar = candidate.last, ".,;:!?)]}".contains(lastChar) {
                 candidate.removeLast()
             }
-            guard candidate.count <= 2048,
+            guard !candidate.isEmpty, candidate.count <= 2048,
                   let url = URL(string: candidate),
                   let scheme = url.scheme?.lowercased(),
-                  scheme == "http" || scheme == "https",
+                  (scheme == "http" || scheme == "https"),
                   let host = url.host, !host.isEmpty,
                   url.user == nil, url.password == nil else { return nil }
-            // Ensure click wasn't on the stripped trailing punctuation.
             let actualEnd = first + (candidate as NSString).length
-            if actualEnd <= columns.count && location.1 > columns[actualEnd - 1] {
-                return nil
-            }
-            return url
+            guard actualEnd <= columns.count, actualEnd > first,
+                  location.1 <= columns[actualEnd - 1] else { return nil }
+            return HoveredLink(url: url, row: location.0,
+                firstColumn: columns[first], lastColumn: columns[actualEnd - 1])
         }
         return nil
     }
