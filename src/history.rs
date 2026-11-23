@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 //! Streaming text index plus lightweight OSC 133 command-output anchors.
 //! The raw ANSI log remains authoritative; this index never replays TUI state.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct HistoryIndexer {
     pending: Vec<u8>,
     carriage_return: bool,

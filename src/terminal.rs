@@ -1,14 +1,17 @@
 // SPDX-License-Identifier: MPL-2.0
 use anyhow::{Context, Result};
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
-use std::{fs::{self, File}, io::{Read, Seek, SeekFrom, Write}, num::NonZeroU16, path::{Path, PathBuf}, sync::mpsc::{self, Receiver}, thread};
-use crate::{storage::SessionRecord, history::HistoryIndexer};
+use std::{fs::{self, File}, io::{Read, Seek, SeekFrom}, num::NonZeroU16, path::{Path, PathBuf}, sync::mpsc::{self, Receiver}, thread};
+#[cfg(test)]
+use std::io::Write;
+use crate::{storage::SessionRecord, history::HistoryIndexer, pty_input::PtyInput};
 
 pub struct LiveTerminal {
     pub parser: vt100::Parser,
-    pub input: Box<dyn Write + Send>,
+    pub input: PtyInput,
     pub master: Box<dyn MasterPty + Send>,
     pub rx: Receiver<Vec<u8>>,
+    pub remote: bool,
     pub history_indexer: HistoryIndexer,
     state_path: PathBuf,
     ai_request_path: Option<PathBuf>,
@@ -86,9 +89,13 @@ impl LiveTerminal {
             }
         }
         let child = pair.slave.spawn_command(command)?;
-        let mut reader = pair.master.try_clone_reader()?;
+        let reader = pair.master.try_clone_reader()?;
         let writer = pair.master.take_writer()?;
-        let (tx, rx) = mpsc::channel();
+        let input = PtyInput::for_pty(pair.master.as_ref(), writer)?;
+        let mut reader = input.reader(reader);
+        // A slow disk or a temporarily busy UI must apply backpressure instead
+        // of retaining an unbounded terminal transcript in memory.
+        let (tx, rx) = mpsc::sync_channel(64);
         thread::Builder::new().name(format!("pty-{}",record.id)).spawn(move || {
             let mut buf = [0u8; 8192];
             loop {
@@ -125,7 +132,7 @@ impl LiveTerminal {
         let mut terminal = Self { state_path, ai_request_path, exit_request_path, exit_approval_path, exit_observed_polls: 0,
             marks_file, marks_offset: 0, marks_buffer: Vec::new(), pending_mark: None, agent_resume_path,
             history_indexer: HistoryIndexer::default(), parser: vt100::Parser::new(NonZeroU16::new(rows).unwrap(), NonZeroU16::new(cols).unwrap(), scrollback_lines),
-            input: writer, master: pair.master, rx, _child: child };
+            input, master: pair.master, rx, remote: remote_host.is_some(), _child: child };
         // Only a previously observed explicit resume command is replayed.
         // Never replay arbitrary shell history or unvalidated input.
         if let Some(command) = saved_agent {
@@ -272,13 +279,20 @@ impl LiveTerminal {
         Ok(Some((cwd.to_owned(), venv)))
     }
 
-    pub fn send(&mut self, bytes: &[u8]) -> Result<()> { self.input.write_all(bytes)?; self.input.flush()?; Ok(()) }
+    pub fn send(&mut self, bytes: &[u8]) -> Result<()> { self.input.send(bytes) }
+    pub fn input_error(&self) -> Option<String> { self.input.error() }
     pub fn resize(&mut self, rows: u16, cols: u16) -> Result<()> {
         let rows = rows.max(1);
         let cols = cols.max(1);
         self.master.resize(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 })?;
         self.parser.set_size(NonZeroU16::new(rows).unwrap(), NonZeroU16::new(cols).unwrap());
         Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn request_paths_for_tests(&mut self, ai: PathBuf, exit: PathBuf) {
+        self.ai_request_path = Some(ai);
+        self.exit_request_path = Some(exit);
     }
 
     #[cfg(test)]
@@ -290,7 +304,7 @@ impl LiveTerminal {
             pixel_height: 0,
         })?;
         let child = pair.slave.spawn_command(CommandBuilder::new("/bin/cat"))?;
-        let input = pair.master.take_writer()?;
+        let input = PtyInput::for_pty(pair.master.as_ref(), pair.master.take_writer()?)?;
         let (_tx, rx) = mpsc::channel();
         Ok(Self {
             parser: vt100::Parser::new(
@@ -301,6 +315,7 @@ impl LiveTerminal {
             input,
             master: pair.master,
             rx,
+            remote: false,
             history_indexer: HistoryIndexer::default(),
             state_path: PathBuf::new(),
             ai_request_path: None,
@@ -314,6 +329,18 @@ impl LiveTerminal {
             agent_resume_path: None,
             _child: child,
         })
+    }
+}
+
+impl Drop for LiveTerminal {
+    fn drop(&mut self) {
+        self.input.cancel();
+        // Input/output workers observe cancellation within their bounded poll
+        // wait. Terminate only the local shell/SSH child as this session closes.
+        // Remote tmux is independent of that SSH client and remains running.
+        if !matches!(self._child.try_wait(), Ok(Some(_))) {
+            let _ = self._child.kill();
+        }
     }
 }
 
@@ -881,9 +908,10 @@ mod history_tests {
                 NonZeroU16::new(100).unwrap(),
                 100,
             ),
-            input: writer,
+            input: PtyInput::for_pty(pair.master.as_ref(), writer).unwrap(),
             master: pair.master,
             rx,
+            remote: false,
             history_indexer: HistoryIndexer::default(),
             state_path: temp.path().join("state"),
             ai_request_path: None,

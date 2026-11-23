@@ -123,6 +123,21 @@ impl Store {
         Self::open_at(base)
     }
 
+    /// A separate connection is owned exclusively by the persistence thread.
+    /// WAL readers can continue to inspect committed history while it writes.
+    pub(crate) fn persistence_connection(&self) -> Result<Self> {
+        Self::open_at(self.home.clone())
+    }
+
+    /// Background state updates must never reopen an archived session.
+    pub(crate) fn update_shell_state(&self, record: &SessionRecord) -> Result<()> {
+        self.conn.execute(
+            "UPDATE sessions SET cwd=?2, venv=?3, updated_at=CURRENT_TIMESTAMP WHERE id=?1",
+            params![record.id, record.cwd, record.venv],
+        )?;
+        Ok(())
+    }
+
     pub fn remote_host(&self, id: &str) -> Result<Option<String>> {
         self.conn.query_row("SELECT ssh_host FROM remote_sessions WHERE session_id=?1", [id], |r| r.get(0))
             .optional().map_err(Into::into)
@@ -624,6 +639,8 @@ impl Store {
         }
     }
 
+    // Kept for the legacy egui executable and raw-log regression fixtures.
+    #[allow(dead_code)]
     pub fn append_and_sync(file: &mut File, data: &[u8]) -> Result<()> {
         file.write_all(data)?;
         file.sync_data()?;

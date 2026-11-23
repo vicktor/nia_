@@ -85,6 +85,18 @@ La ruta de **Ver salida** también conserva el texto CRLF, repara los índices d
 
 Consulta [CHANGELOG-v0.7.5.md](CHANGELOG-v0.7.5.md) para las pruebas automáticas, los límites de navegación y la comprobación en macOS.
 
+## Escritura y renderizado fluidos (v0.7.6)
+
+La aplicación nativa utiliza ahora un único reloj de salida con un intervalo objetivo de 1/60 de segundo, en lugar del sondeo de 120 ms por ventana. Los metadatos de sesiones se actualizan por separado cada 500 ms. Los paneles visibles solicitan una captura binaria compacta solo cuando cambia la revisión de su terminal; las listas de sesiones sin cambios no se vuelven a publicar en SwiftUI.
+
+La entrada se escribe en orden fuera del hilo de interfaz, también durante pegados grandes o cuando la PTY está ocupada. Su cola acotada acepta cada evento completo o informa de que todavía no se puede enviar.
+
+Un trabajador en segundo plano guarda la salida original y su índice de texto en orden. El parser de la pantalla ya no espera a sincronizar un archivo en disco para mostrar el eco del teclado. Las colas tienen un límite y frenan la lectura si se llenan, sin descartar salida. La navegación del historial espera a las escrituras pendientes y el cierre normal de la aplicación vacía la cola. La salida puede verse antes de quedar guardada de forma duradera: un cierre forzado o un corte de corriente puede perder el tramo todavía pendiente.
+
+El cursor sigue la fila real del parser, incluidas las filas vacías, y reinicia el parpadeo al escribir o moverse. Los glifos nuevos utilizan una captura inmutable de la textura Metal para que la CPU no sobrescriba una textura que sigue usando un frame anterior.
+
+Consulta [CHANGELOG-v0.7.6.md](CHANGELOG-v0.7.6.md) para las pruebas y las comprobaciones visuales pendientes en macOS. El intervalo de actualización es un objetivo de planificación, no una garantía medida de latencia de extremo a extremo.
+
 ## Características
 
 | Área | Funcionalidades actuales | Limitaciones |

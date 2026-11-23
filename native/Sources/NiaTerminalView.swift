@@ -39,7 +39,7 @@ private struct GlyphUV {
 private final class GlyphAtlas {
     let device: MTLDevice
     let size = 1024
-    let texture: MTLTexture
+    private var texture: MTLTexture?
     private let pixels: UnsafeMutablePointer<UInt8>
     private let context: CGContext
     private var entries: [String: GlyphUV] = [:]
@@ -56,11 +56,6 @@ private final class GlyphAtlas {
         self.font = font
         self.cellWidth = cellWidth
         self.cellHeight = cellHeight
-        let desc = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba8Unorm,
-                                                            width: size, height: size, mipmapped: false)
-        desc.usage = [.shaderRead]
-        guard let tex = device.makeTexture(descriptor: desc) else { return nil }
-        texture = tex
         pixels = .allocate(capacity: size * size * 4)
         pixels.initialize(repeating: 0, count: size * size * 4)
         guard let ctx = CGContext(data: pixels, width: size, height: size,
@@ -99,11 +94,21 @@ private final class GlyphAtlas {
         dirty = true
         return uv
     }
-    func uploadIfNeeded() {
-        guard dirty else { return }
-        texture.replace(region: MTLRegionMake2D(0, 0, size, size), mipmapLevel: 0,
-                        withBytes: pixels, bytesPerRow: size * 4)
+    func textureForFrame() -> MTLTexture? {
+        guard dirty else { return texture }
+        let desc = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba8Unorm,
+                                                            width: size, height: size, mipmapped: false)
+        desc.usage = [.shaderRead]
+        guard let snapshot = device.makeTexture(descriptor: desc) else { return nil }
+        // replace() writes synchronously on the CPU but does not synchronize
+        // with GPU readers. Never overwrite a texture submitted by an earlier
+        // frame. Command buffers retain their immutable snapshot until done.
+        // Cached-glyph frames reuse this texture without allocating or copying.
+        snapshot.replace(region: MTLRegionMake2D(0, 0, size, size), mipmapLevel: 0,
+                         withBytes: pixels, bytesPerRow: size * 4)
+        texture = snapshot
         dirty = false
+        return snapshot
     }
 }
 
@@ -151,7 +156,7 @@ final class NiaMetalView: MTKView, MTKViewDelegate {
             selectionEnd = nil
             scrollRemainder = 0
             currentRevision = nil
-            phase = true
+            recordCursorActivity()
             terminalFrame = nil
             needsDisplay = true
             requestSizeReport()
@@ -161,6 +166,12 @@ final class NiaMetalView: MTKView, MTKViewDelegate {
     func present(_ frame: ScreenSnapshot?, revision: UInt64) {
         guard currentRevision != revision else { return }
         currentRevision = revision
+        if let frame, frame.scrollback_offset == 0, frame.cursor_visible,
+           terminalFrame?.cursor_row != frame.cursor_row ||
+           terminalFrame?.cursor_col != frame.cursor_col ||
+           terminalFrame?.cursor_visible != frame.cursor_visible {
+            recordCursorActivity()
+        }
         terminalFrame = frame
     }
     private var terminalFrame: ScreenSnapshot? {
@@ -184,7 +195,7 @@ final class NiaMetalView: MTKView, MTKViewDelegate {
     private var atlas: GlyphAtlas?
     private var cellWidth: CGFloat = 9
     private var cellHeight: CGFloat = 18
-    private var phase = true
+    private var cursor = NiaTerminalCursor()
     private var timer: Timer?
     private var sizeSync = NiaTerminalSizeSync()
     private var sizeReportPending = false
@@ -296,8 +307,9 @@ final class NiaMetalView: MTKView, MTKViewDelegate {
             timer?.invalidate()
             let t = Timer(timeInterval: 0.55, repeats: true) { [weak self] _ in
                 guard let self else { return }
-                self.phase.toggle()
-                if self.cursorBlink { self.needsDisplay = true }
+                if self.cursor.advance(at: ProcessInfo.processInfo.systemUptime), self.cursorBlink {
+                    self.needsDisplay = true
+                }
             }
             RunLoop.main.add(t, forMode: .common)
             timer = t
@@ -365,26 +377,14 @@ final class NiaMetalView: MTKView, MTKViewDelegate {
     }
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) { requestSizeReport() }
 
-    private func rowIsVisuallyBlank(_ row: Int, in frame: ScreenSnapshot) -> Bool {
-        guard row >= 0 && row < frame.cells.count else { return true }
-        return frame.cells[row].allSatisfy { cell in
-            let trimmed = cell.t.trimmingCharacters(in: .whitespacesAndNewlines)
-            return trimmed.isEmpty && !cell.continuation
-        }
+    private func recordCursorActivity() {
+        if cursor.recordActivity(at: ProcessInfo.processInfo.systemUptime) { needsDisplay = true }
+        timer?.fireDate = Date(timeIntervalSinceNow: NiaTerminalCursor.blinkInterval)
     }
-    private func resolvedCursorRow(in frame: ScreenSnapshot) -> Int {
-        guard !frame.cells.isEmpty else { return 0 }
-        var row = min(max(Int(frame.cursor_row), 0), frame.cells.count - 1)
-        if rowIsVisuallyBlank(row, in: frame) {
-            var probe = row
-            var steps = 0
-            while probe > 0 && steps < 2 && rowIsVisuallyBlank(probe, in: frame) {
-                probe -= 1
-                steps += 1
-            }
-            if !rowIsVisuallyBlank(probe, in: frame) { row = probe }
-        }
-        return row
+    private func sendInput(_ bytes: [UInt8]) {
+        guard !bytes.isEmpty else { return }
+        recordCursorActivity()
+        onBytes?(bytes)
     }
 
     private func quad(_ vertices: inout [Float], x: Float,y: Float,w: Float,h: Float,
@@ -398,12 +398,9 @@ final class NiaMetalView: MTKView, MTKViewDelegate {
         point(x+w,y,u1,v0); point(x+w,y+h,u1,v1); point(x,y+h,u0,v1)
     }
     func draw(in view: MTKView) {
-        guard let device, let pipeline, let queue, let atlas,
-              let pass = currentRenderPassDescriptor, let drawable = currentDrawable else { return }
+        guard let device, let pipeline, let queue, let atlas else { return }
         let dark = effectiveAppearance.bestMatch(from: [.darkAqua,.aqua]) == .darkAqua
         let defaultBG = palette(-1, foreground: false, dark: dark)
-        pass.colorAttachments[0].clearColor = MTLClearColor(red: Double(defaultBG.x),
-            green: Double(defaultBG.y), blue: Double(defaultBG.z), alpha: opacity)
         var bg: [Float] = [], fg: [Float] = []
         let scale: Float = Float(window?.backingScaleFactor ?? 2)
         let cw = Float(cellWidth), ch = Float(cellHeight)
@@ -437,9 +434,10 @@ final class NiaMetalView: MTKView, MTKViewDelegate {
                     }
                 }
             }
-            if f.scrollback_offset == 0 && f.cursor_visible && (phase || !cursorBlink) {
-                let cursorRow = resolvedCursorRow(in: f)
-                let x = Float(f.cursor_col)*cw, y = Float(cursorRow)*ch
+            if f.scrollback_offset == 0 && f.cursor_visible && (cursor.phaseVisible || !cursorBlink),
+               let position = NiaTerminalCursor.position(row: Int(f.cursor_row), column: Int(f.cursor_col),
+                                                         rows: f.cells.count, columns: Int(f.cols)) {
+                let x = Float(position.column)*cw, y = Float(position.row)*ch
                 let cursorColor = palette(-1,foreground:true,dark:dark)
                 switch cursorShape {
                 case "block": quad(&fg,x:x,y:y,w:cw,h:ch,uv:nil,color:SIMD4(cursorColor.x,cursorColor.y,cursorColor.z,0.38))
@@ -448,10 +446,15 @@ final class NiaMetalView: MTKView, MTKViewDelegate {
                 }
             }
         }
-        atlas.uploadIfNeeded()
+        guard let texture = atlas.textureForFrame() else { return }
+        // Prepare CPU geometry and any new glyph snapshot before acquiring a
+        // drawable, so it is held only while encoding/submitting this frame.
+        guard let pass = currentRenderPassDescriptor, let drawable = currentDrawable else { return }
+        pass.colorAttachments[0].clearColor = MTLClearColor(red: Double(defaultBG.x),
+            green: Double(defaultBG.y), blue: Double(defaultBG.z), alpha: opacity)
         guard let cmd = queue.makeCommandBuffer(), let encoder = cmd.makeRenderCommandEncoder(descriptor: pass) else { return }
         encoder.setRenderPipelineState(pipeline)
-        encoder.setFragmentTexture(atlas.texture, index: 0)
+        encoder.setFragmentTexture(texture, index: 0)
         var viewport = SIMD2<Float>(Float(drawableSize.width),Float(drawableSize.height))
         encoder.setVertexBytes(&viewport,length:MemoryLayout<SIMD2<Float>>.stride,index:1)
         for vertices in [bg,fg] where !vertices.isEmpty {
@@ -627,7 +630,7 @@ final class NiaMetalView: MTKView, MTKViewDelegate {
         let inserted = urls.map { shellQuotedPath($0.path) }.joined(separator: " ") + " "
         window?.makeFirstResponder(self)
         onFocus?()
-        onBytes?(Array(inserted.utf8))
+        sendInput(Array(inserted.utf8))
         return true
     }
 
@@ -708,7 +711,7 @@ final class NiaMetalView: MTKView, MTKViewDelegate {
         // Never steal focus from another pane to paste into this one.
         guard window?.firstResponder === self,
               let text = NSPasteboard.general.string(forType: .string) else { return }
-        onBytes?(Array(text.replacingOccurrences(of: "\r\n", with: "\n").utf8))
+        sendInput(Array(text.replacingOccurrences(of: "\r\n", with: "\n").utf8))
     }
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         // AppKit may ask every subview whether it handles a key equivalent.
@@ -793,7 +796,7 @@ final class NiaMetalView: MTKView, MTKViewDelegate {
         // Always route insertion through this view's session-specific callback.
         window?.makeFirstResponder(self)
         onFocus?()
-        onBytes?(Array(value.utf8))
+        sendInput(Array(value.utf8))
     }
 
     @objc private func insertUUID(_ sender: Any?) {
@@ -847,7 +850,7 @@ final class NiaMetalView: MTKView, MTKViewDelegate {
         if pendingEscape != nil {
             pendingEscape?.cancel()
             pendingEscape = nil
-            onBytes?([27])
+            sendInput([27])
         }
     }
 
@@ -865,7 +868,7 @@ final class NiaMetalView: MTKView, MTKViewDelegate {
                 pendingEscape = nil
                 // Default Zsh/Bash emacs bindings: Ctrl+A then Ctrl+K clears
                 // the entire editable line, without executing it.
-                onBytes?([1, 11])
+                sendInput([1, 11])
             } else {
                 flushPendingEscape()
                 lastEscapeAt = now
@@ -873,7 +876,7 @@ final class NiaMetalView: MTKView, MTKViewDelegate {
                     guard let self else { return }
                     self.pendingEscape = nil
                     // Do not send a delayed Escape to a panel that lost focus.
-                    if self.window?.firstResponder === self { self.onBytes?([27]) }
+                    if self.window?.firstResponder === self { self.sendInput([27]) }
                 }
                 pendingEscape = task
                 DispatchQueue.main.asyncAfter(deadline: .now() + doubleEscapeInterval, execute: task)
@@ -884,10 +887,10 @@ final class NiaMetalView: MTKView, MTKViewDelegate {
         let codes: [UInt16:[UInt8]] = [36:[13],76:[13],48:[9],51:[127],
             123:[27,91,68],124:[27,91,67],125:[27,91,66],126:[27,91,65],
             115:[27,91,72],119:[27,91,70],117:[27,91,51,126]]
-        if let code = codes[event.keyCode] { onBytes?(code); return }
+        if let code = codes[event.keyCode] { sendInput(code); return }
         if flags.contains(.control), let c = event.charactersIgnoringModifiers?.lowercased().utf8.first,
-            c >= 97 && c <= 122 { onBytes?([c-96]); return }
-        if let text = event.characters, !text.isEmpty { onBytes?(Array(text.utf8)) }
+            c >= 97 && c <= 122 { sendInput([c-96]); return }
+        if let text = event.characters, !text.isEmpty { sendInput(Array(text.utf8)) }
     }
 }
 

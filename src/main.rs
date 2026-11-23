@@ -5,6 +5,7 @@ mod backup_config;
 mod actions;
 mod storage;
 mod terminal;
+mod pty_input;
 
 use std::{collections::HashMap, time::{Duration, SystemTime, UNIX_EPOCH}, sync::mpsc::{self, Receiver}};
 use eframe::egui::{self, Color32, FontId, Pos2, Sense, Vec2};
