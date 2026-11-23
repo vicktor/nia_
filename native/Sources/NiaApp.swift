@@ -35,6 +35,7 @@ private enum NiaMonospaceFonts {
 
 struct SessionEntry: Decodable, Identifiable, Hashable {
     let id: String
+    let display_name: String
     let cwd: String
     let closed: Bool
     let venv: String?
@@ -261,6 +262,22 @@ private extension FocusedValues {
             refreshSessions()
             activate(name)
         }
+    }
+    func renameSession(_ id: String, to name: String) -> Bool {
+        guard let handle else { return false }
+        let newName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !newName.isEmpty else {
+            error = NiaL10n.string("El nombre de la sesión no puede estar vacío.")
+            return false
+        }
+        let result = id.withCString { session in
+            newName.withCString { title in nia_rename_session(handle, session, title) }
+        }
+        if report(result) { refreshSessions(); return true }
+        return false
+    }
+    func title(for id: String) -> String {
+        sessions.first(where: { $0.id == id })?.display_name ?? id
     }
     func requestFocus(_ id: String) {
         focusSession = id
@@ -594,6 +611,9 @@ struct MainWindow: View {
     @AppStorage("nia.fontName") private var terminalFontName = "system"
     @AppStorage("nia.fontSize") private var terminalFontSize = 13.0
     @State private var newSession = ""
+    @State private var editingSession: String?
+    @State private var editedTitle = ""
+    @FocusState private var editingTitleFocused: Bool
     @State private var showRemoteSetup = false
     @State private var remoteName = ""
     @State private var remoteHost = ""
@@ -617,12 +637,25 @@ struct MainWindow: View {
 
                 List(selection: Binding(get: { model.activePane == 1 && model.splitMode != "off" ? model.secondary : model.selected }, set: { if let id = $0 { model.activate(id) } })) {
                     Section("SESIONES") {
-                        ForEach(model.visibleSessions.filter { filter.isEmpty || $0.id.localizedCaseInsensitiveContains(filter) }) { item in
+                        ForEach(model.visibleSessions.filter {
+                            filter.isEmpty || $0.display_name.localizedCaseInsensitiveContains(filter)
+                                || $0.id.localizedCaseInsensitiveContains(filter)
+                        }) { item in
                             HStack(spacing: 8) {
                                 Image(systemName: item.closed ? "archivebox" : (item.remote_host == nil ? "terminal" : "network"))
                                     .foregroundStyle(Color(hexRGB: item.color))
                                 VStack(alignment: .leading, spacing: 3) {
-                                    Text(item.id).lineLimit(1)
+                                    if editingSession == item.id {
+                                        TextField("Nombre de sesión", text: $editedTitle)
+                                            .textFieldStyle(.plain)
+                                            .focused($editingTitleFocused)
+                                            .onSubmit { commitRename(item.id) }
+                                            .onExitCommand { cancelRename() }
+                                    } else {
+                                        Text(item.display_name)
+                                            .lineLimit(1)
+                                            .onTapGesture(count: 2) { beginRename(item) }
+                                    }
                                     Text(item.cwd).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
                                 }
                                 Spacer(minLength: 0)
@@ -674,6 +707,7 @@ struct MainWindow: View {
                                 }
                             ))
                             .contextMenu {
+                                Button("Renombrar sesión") { beginRename(item) }
                                 Button(LocalizedStringKey(item.closed ? "Abrir sesión" : "Cambiar a sesión")) { model.activate(item.id) }
                                 Button("Historial de comandos") { model.showTimeline(for: item.id) }
                                 if item.remote_host != nil {
@@ -728,7 +762,7 @@ struct MainWindow: View {
                 ? Color(nsColor: .textBackgroundColor) : Color.clear)
         }
         .background(NiaWindowTransparency(opacity: model.selected == nil ? 1.0 : terminalOpacity))
-        .navigationTitle(model.selected ?? "nia_")
+        .navigationTitle(model.selected.map { model.title(for: $0) } ?? "nia_")
         // Keep the native macOS titlebar and traffic-light controls.
         // Arrange the three workspace actions left to right in one group.
         // No custom titlebar overlays or NSWindow toolbar manipulation.
@@ -857,7 +891,7 @@ struct MainWindow: View {
                 HStack {
                     Circle().fill(Color(hexRGB: model.sessions.first(where: { $0.id == session })?.color ?? "#648ACA"))
                         .frame(width: 5, height: 5)
-                    Text(session).font(.caption).foregroundStyle(.secondary)
+                    Text(model.title(for: session)).font(.caption).foregroundStyle(.secondary)
                     Spacer()
                 }
                 .padding(.horizontal, 9)
@@ -876,6 +910,25 @@ struct MainWindow: View {
                 .frame(minWidth: 180, minHeight: 100)
         }
     }
+    private func beginRename(_ item: SessionEntry) {
+        editedTitle = item.display_name
+        editingSession = item.id
+        DispatchQueue.main.async { editingTitleFocused = true }
+    }
+
+    private func cancelRename() {
+        editingSession = nil
+        editingTitleFocused = false
+    }
+
+    private func commitRename(_ id: String) {
+        if model.renameSession(id, to: editedTitle) {
+            cancelRename()
+        } else {
+            editingTitleFocused = true
+        }
+    }
+
     private func create() {
         model.create(newSession)
         newSession = ""
