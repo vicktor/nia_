@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://vicktor.github.io/nia_/sitemap.xml
