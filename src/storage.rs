@@ -19,6 +19,7 @@ pub struct CommandMark {
     pub exit_code: i64,
     pub cwd: String,
     pub command: String,
+    pub repeat_count: i64,
 }
 
 pub struct Store {
@@ -297,15 +298,19 @@ impl Store {
         Ok(())
     }
 
+    /// Return one row per exact command for this session. The representative
+    /// row is always the most recent execution; older executions contribute
+    /// only to repeat_count. This is an on-demand query, never a poll task.
     pub fn recent_command_marks(&self, session: &str, limit: usize) -> Result<Vec<CommandMark>> {
         let mut statement = self.conn.prepare(
-            "SELECT id, started_at, duration_ms, exit_code, cwd, command              FROM command_marks WHERE session_id=?1 ORDER BY id DESC LIMIT ?2"
+            "WITH ranked AS (                 SELECT id, started_at, duration_ms, exit_code, cwd, command,                        ROW_NUMBER() OVER (PARTITION BY command ORDER BY id DESC) AS rn,                        COUNT(*) OVER (PARTITION BY command) AS repeat_count                 FROM command_marks WHERE session_id=?1              )              SELECT id, started_at, duration_ms, exit_code, cwd, command, repeat_count              FROM ranked WHERE rn=1 ORDER BY id DESC LIMIT ?2"
         )?;
         let rows = statement.query_map(params![session, limit.min(250) as i64], |row| {
             Ok(CommandMark {
                 id: row.get(0)?, started_at: row.get(1)?,
                 duration_ms: row.get(2)?, exit_code: row.get(3)?,
-                cwd: row.get(4)?, command: row.get(5)?
+                cwd: row.get(4)?, command: row.get(5)?,
+                repeat_count: row.get(6)?,
             })
         })?;
         rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
