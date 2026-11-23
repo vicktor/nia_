@@ -69,6 +69,7 @@ struct NiaCommandMark: Decodable, Identifiable {
     let cwd: String
     let command: String
     let repeat_count: Int64
+    let has_anchor: Bool
 }
 struct NiaTimelineTarget: Identifiable {
     let id: String
@@ -436,6 +437,16 @@ private extension FocusedValues {
         _ = bytes.withUnsafeBufferPointer { buffer in
             id.withCString { nia_send(handle, $0, buffer.baseAddress, buffer.count) }
         }
+    }
+    /// Navigate the indexed transcript without sending anything to the shell.
+    func jumpToCommand(_ mark: NiaCommandMark, session id: String) -> Bool {
+        guard let handle else { return false }
+        // The selected tab is already owned by this window; an old archived
+        // session is activated normally before querying its disk history.
+        activate(id)
+        guard report(id.withCString({ nia_jump_to_command(handle, $0, mark.id) })) else { return false }
+        refreshScreen(for: id)
+        return true
     }
     func scroll(lines: Int, session id: String) {
         guard let handle, lines != 0 else { return }
@@ -824,12 +835,17 @@ struct MainWindow: View {
             }
         }
         .sheet(item: $model.timelineTarget) { target in
-            NiaCommandTimeline(session: target.id, marks: model.commandMarks(for: target.id)) { command in
-                guard !command.contains("\n") && !command.contains("\r") else { return }
-                model.activate(target.id)
-                model.send(Array(command.utf8), to: target.id)
-                model.requestFocus(target.id)
-            }
+            NiaCommandTimeline(
+                session: target.id, marks: model.commandMarks(for: target.id),
+                onInsert: { command in
+                    guard !command.contains("\n") && !command.contains("\r") else { return }
+                    model.activate(target.id)
+                    model.send(Array(command.utf8), to: target.id)
+                    model.requestFocus(target.id)
+                }, onJump: { mark in
+                    model.jumpToCommand(mark, session: target.id)
+                }
+            )
         }
         .sheet(isPresented: $showRemoteSetup) {
             VStack(alignment: .leading, spacing: 14) {
@@ -952,6 +968,7 @@ private struct NiaCommandTimeline: View {
     let session: String
     let marks: [NiaCommandMark]
     let onInsert: (String) -> Void
+    let onJump: (NiaCommandMark) -> Bool
     @Environment(\.dismiss) private var dismiss
     @State private var search = ""
 
@@ -1030,6 +1047,13 @@ private struct NiaCommandTimeline: View {
                                             systemImage: mark.exit_code == 0 ? "checkmark.circle" : "xmark.circle")
                                             .foregroundStyle(mark.exit_code == 0 ? Color.green : Color.orange)
                                         Spacer()
+                                        Button("Ver salida") {
+                                            if onJump(mark) { dismiss() }
+                                        }
+                                        .disabled(!mark.has_anchor)
+                                        .help(mark.has_anchor
+                                            ? "Ir al resultado de este comando"
+                                            : "Sin marca de navegación: vuelve a ejecutar el comando")
                                         Button("Copiar") {
                                             NSPasteboard.general.clearContents()
                                             NSPasteboard.general.setString(mark.command, forType: .string)
