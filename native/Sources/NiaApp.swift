@@ -67,6 +67,7 @@ struct NiaCommandMark: Decodable, Identifiable {
     let exit_code: Int64
     let cwd: String
     let command: String
+    let repeat_count: Int64
 }
 struct NiaTimelineTarget: Identifiable {
     let id: String
@@ -769,6 +770,13 @@ struct MainWindow: View {
                     Image(systemName: "folder.badge.plus")
                 }
                 .help("Abrir sesión guardada en esta ventana")
+                Button {
+                    model.showTimeline()
+                } label: {
+                    Image(systemName: "clock.arrow.circlepath")
+                }
+                .help("Historial de comandos")
+                .disabled(model.selected == nil)
             }
         }
         .sheet(item: $model.timelineTarget) { target in
@@ -893,7 +901,13 @@ private struct NiaCommandTimeline: View {
         }
     }
 
+    private var hasSearch: Bool {
+        !search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     var body: some View {
+        // A fixed, full-height sheet avoids the native window re-centering its
+        // content when search switches from a scroll view to an empty state.
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Label("Historial de comandos", systemImage: "clock.arrow.circlepath")
@@ -901,57 +915,88 @@ private struct NiaCommandTimeline: View {
                 Spacer()
                 Button("Cerrar") { dismiss() }
             }
-            Text(session).font(.subheadline).foregroundStyle(.secondary)
+            Text(session)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
             TextField("Buscar comandos", text: $search)
                 .textFieldStyle(.roundedBorder)
-            if visible.isEmpty {
-                ContentUnavailableView("Sin comandos registrados", systemImage: "terminal",
-                    description: Text("Se registran los comandos completados en Zsh local."))
-            } else {
-                ScrollView {
-                    LazyVStack(spacing: 0) {
-                        ForEach(visible) { mark in
-                            VStack(alignment: .leading, spacing: 5) {
-                                Text(mark.command)
-                                    .font(.system(size: 12, design: .monospaced))
-                                    .textSelection(.enabled)
-                                Text(mark.cwd)
-                                    .font(.caption2)
+
+            Group {
+                if visible.isEmpty {
+                    VStack(spacing: 10) {
+                        Image(systemName: hasSearch ? "magnifyingglass" : "terminal")
+                            .font(.system(size: 31, weight: .light))
+                            .foregroundStyle(.tertiary)
+                        Text(hasSearch ? "No hay coincidencias" : "Sin comandos registrados")
+                            .font(.headline)
+                            .foregroundStyle(.secondary)
+                        Text(hasSearch
+                            ? "No se ha encontrado ningún comando que coincida con tu búsqueda."
+                            : "Se registran los comandos completados en Zsh local.")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                            .frame(maxWidth: 380)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+                } else {
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 0) {
+                            ForEach(visible) { mark in
+                                VStack(alignment: .leading, spacing: 5) {
+                                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                        Text(mark.command)
+                                            .font(.system(size: 12, design: .monospaced))
+                                            .textSelection(.enabled)
+                                        if mark.repeat_count > 1 {
+                                            Text("×\(mark.repeat_count)")
+                                                .font(.caption2.weight(.medium))
+                                                .foregroundStyle(.secondary)
+                                        }
+                                        Spacer(minLength: 0)
+                                    }
+                                    Text(mark.cwd)
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                    HStack(spacing: 10) {
+                                        Text(Date(timeIntervalSince1970: mark.started_at)
+                                            .formatted(date: .abbreviated, time: .shortened))
+                                        Text(String(format: "%.2f s", Double(mark.duration_ms) / 1000.0))
+                                        Label(String(mark.exit_code),
+                                            systemImage: mark.exit_code == 0 ? "checkmark.circle" : "xmark.circle")
+                                            .foregroundStyle(mark.exit_code == 0 ? Color.green : Color.orange)
+                                        Spacer()
+                                        Button("Copiar") {
+                                            NSPasteboard.general.clearContents()
+                                            NSPasteboard.general.setString(mark.command, forType: .string)
+                                        }
+                                        Button("Insertar") {
+                                            onInsert(mark.command)
+                                            dismiss()
+                                        }
+                                        .disabled(mark.command.contains("\n") || mark.command.contains("\r"))
+                                    }
+                                    .font(.caption)
                                     .foregroundStyle(.secondary)
-                                    .lineLimit(1)
-                                HStack(spacing: 10) {
-                                    Text(Date(timeIntervalSince1970: mark.started_at)
-                                        .formatted(date: .abbreviated, time: .shortened))
-                                    Text(String(format: "%.2f s", Double(mark.duration_ms) / 1000.0))
-                                    Label(String(mark.exit_code),
-                                        systemImage: mark.exit_code == 0 ? "checkmark.circle" : "xmark.circle")
-                                        .foregroundStyle(mark.exit_code == 0 ? Color.green : Color.orange)
-                                    Spacer()
-                                    Button("Copiar") {
-                                        NSPasteboard.general.clearContents()
-                                        NSPasteboard.general.setString(mark.command, forType: .string)
-                                    }
-                                    Button("Insertar") {
-                                        onInsert(mark.command)
-                                        dismiss()
-                                    }
-                                    .disabled(mark.command.contains("\n") || mark.command.contains("\r"))
                                 }
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                                .padding(.vertical, 9)
+                                Divider()
                             }
-                            .padding(.vertical, 9)
-                            Divider()
                         }
                     }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+
             Text("Los comandos pueden contener datos sensibles. El historial se guarda localmente en SQLite.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(20)
-        .frame(minWidth: 610, idealWidth: 710, minHeight: 420, idealHeight: 560)
+        .frame(width: 710, height: 560)
     }
 }
 
