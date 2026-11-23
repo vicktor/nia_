@@ -380,7 +380,7 @@ final class NiaMetalView: MTKView, MTKViewDelegate {
     // on a render tick. This adds no background worker and no allocations on
     // the steady-state Metal drawing path.
     private static let webLinkPattern = try! NSRegularExpression(
-        pattern: #"https?://[^\\s<>\\\"']+"#,
+        pattern: #"https?://[^\s<>"']+"#,
         options: [.caseInsensitive]
     )
     private var contextualURL: URL?
