@@ -506,6 +506,7 @@ private struct NiaWindowRoot: View {
 }
 @main struct NiaApp: App {
     @AppStorage("nia.language") private var language = "system"
+    @AppStorage("nia.appearance") private var appearance = "system"
     @FocusedValue(\.niaWindowModel) private var focusedModel
     var body: some Scene {
         // WindowGroup supplies the native Cmd+N action.
@@ -550,6 +551,9 @@ private struct NiaWindowRoot: View {
         Settings {
             NiaSettings()
                 .environment(\.locale, language == "system" ? Locale.autoupdatingCurrent : Locale(identifier: language))
+                // Settings is a separate macOS scene: it does not inherit
+                // MainWindow's preferredColorScheme. Keep both in sync.
+                .preferredColorScheme(appearance == "dark" ? .dark : appearance == "light" ? .light : nil)
         }
     }
 }
