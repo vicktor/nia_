@@ -155,7 +155,7 @@ private extension FocusedValues {
         windowID = nil
     }
     private func saveWorkspace() {
-        guard windowID != nil else { return }
+        guard let handle, let windowID else { return }
         let layout = WorkspaceLayout(primary: selected,
                                      secondary: secondary,
                                      mode: splitMode,
@@ -163,15 +163,19 @@ private extension FocusedValues {
                                      tabs: tabIDs)
         guard let data = try? JSONEncoder().encode(layout),
               let payload = String(data: data, encoding: .utf8) else { return }
-        // Persist per native window, rather than overwriting the other windows.
-        UserDefaults.standard.set(payload, forKey: "nia.workspace.\(windowID!)")
+        // Save alongside sessions, so encrypted backups include every window.
+        let status = windowID.withCString { id in
+            payload.withCString { nia_save_window_workspace(handle, id, $0) }
+        }
+        if status != 0 { error = resultString(nia_last_error(handle)) }
     }
 
     private func restoreWorkspace() {
         guard let handle, let windowID else { return }
-        var saved = UserDefaults.standard.string(forKey: "nia.workspace.\(windowID)")
-            .flatMap { $0.data(using: .utf8) }
-            .flatMap { try? JSONDecoder().decode(WorkspaceLayout.self, from: $0) }
+        let raw = windowID.withCString { resultString(nia_window_workspace(handle, $0)) }
+        var saved = raw.data(using: .utf8).flatMap {
+            try? JSONDecoder().decode(WorkspaceLayout.self, from: $0)
+        }
         let migrate = !UserDefaults.standard.bool(forKey: "nia.workspace.migrated")
         if saved == nil && migrate {
             let old = resultString(nia_workspace_layout(handle))
