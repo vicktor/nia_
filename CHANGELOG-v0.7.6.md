@@ -71,6 +71,18 @@ The integration harness refuses to run on macOS because its temporary data isola
 
 ### macOS verification
 
+Follow-up validation on macOS 27.2.1 (Apple Silicon): the complete native build
+passes, including SwiftUI/AppKit/Metal compilation, bundle creation, localization
+validation and `codesign --verify --deep --strict`. The 58 Rust tests, 13 Python
+tests and standalone Swift checks (23 geometry, 22 cursor, 186 decoder) also pass.
+The interactive-history test now drains PTY output and closes its slave handle;
+the old harness could hang during Zsh exit on macOS because it never read output.
+Its timeout no longer enters an unbounded child wait. Repository-wide
+`cargo fmt --check` still reports pre-existing formatting differences.
+
+GPU presentation and end-to-end typing latency still require the following
+interactive checks; the successful build does not measure those properties.
+
 1. Build the updated app with `bash scripts/build-native-macos.sh`, quit the previous app normally and launch the rebuilt bundle.
 2. In a large window, type quickly, hold a repeat key, edit with arrows/backspace and paste multiline text. Repeat with two split panes and several windows. Characters should follow the shell echo without 120 ms batches.
 3. Run `cat`, press Return on an empty line, then type. The cursor must stay on the empty input row before the first character. Exit with Ctrl-D.
@@ -98,4 +110,6 @@ La validación final pasa 58 tests Rust, 13 tests Python (incluidas 48 comprobac
 
 En la prueba de decodificación de una pantalla de 50 filas × 160 columnas, la mediana pasa de 30,307 ms con JSON a 0,120 ms con la captura binaria. Es una medición de ese componente en Linux, no de la latencia total de escritura ni de los FPS en tu Mac.
 
-El objetivo de 1/60 de segundo elimina la espera deliberada de 120 ms, pero no equivale a medir la latencia total de teclado a pantalla. Las pruebas automatizadas se realizan en Linux; la compilación completa y la revisión visual siguen necesitando macOS. Los pasos de **macOS verification** comprueban escritura rápida, splits, varias ventanas, filas vacías, Unicode, salida simultánea, persistencia y «Ver salida».
+La validación posterior en macOS 27.2.1 (Apple Silicon) completa la compilación de SwiftUI/AppKit/Metal, la creación del bundle y la verificación de firma. También pasan las 58 pruebas Rust, las 13 Python y las comprobaciones Swift (23 de geometría, 22 de cursor y 186 del decodificador). Se corrige el arnés de historial interactivo para consumir la salida de la PTY y cerrar su descriptor esclavo: antes podía quedarse bloqueado al terminar Zsh en macOS. El timeout ya no espera indefinidamente al proceso. `cargo fmt --check` sigue señalando diferencias de formato preexistentes.
+
+El objetivo de 1/60 de segundo elimina la espera deliberada de 120 ms, pero no equivale a medir la latencia total de teclado a pantalla. Quedan pendientes las comprobaciones visuales de **macOS verification**: escritura rápida, splits, varias ventanas, filas vacías, Unicode, salida simultánea, persistencia y «Ver salida».

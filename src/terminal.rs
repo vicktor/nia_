@@ -830,6 +830,13 @@ mod history_tests {
         }
         command.cwd(&home);
         let mut child = pair.slave.spawn_command(command).unwrap();
+        drop(pair.slave);
+        // A real terminal consumes output while the shell runs. On macOS even
+        // process exit can wait for unread PTY output to drain.
+        let mut output = pair.master.try_clone_reader().unwrap();
+        let output_worker = thread::spawn(move || {
+            let _ = std::io::copy(&mut output, &mut std::io::sink());
+        });
         let mut input = pair.master.take_writer().unwrap();
         let result = temp.path().join("restored-history");
         writeln!(input, "fc -ln 1 > {}", zsh_quote(&result)).unwrap();
@@ -842,11 +849,13 @@ mod history_tests {
             }
             if std::time::Instant::now() >= deadline {
                 let _ = child.kill();
-                let _ = child.wait();
                 panic!("Zsh did not finish the isolated history test");
             }
             thread::sleep(std::time::Duration::from_millis(10));
         }
+        drop(input);
+        drop(pair.master);
+        output_worker.join().unwrap();
         assert!(fs::read_to_string(result)
             .unwrap()
             .contains("echo previous-session-command"));
