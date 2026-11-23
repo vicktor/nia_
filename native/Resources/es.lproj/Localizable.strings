@@ -168,3 +168,5 @@
 "Unknown source session" = "Sesión de origen desconocida";
 "Unknown target session" = "Sesión de destino desconocida";
 "Exit interception is only supported in local Zsh" = "La confirmación previa de exit solo está disponible en Zsh local";
+"Abrir enlace" = "Abrir enlace";
+"Copiar enlace" = "Copiar enlace";

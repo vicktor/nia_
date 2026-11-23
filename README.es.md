@@ -32,6 +32,10 @@ nia_ es un **terminal experimental nativo para macOS** que combina una interfaz 
 - La distribución anterior se migra una sola vez y las nuevas ventanas empiezan vacías.
 - La restauración de todas las ventanas tras cerrar nia_ todavía depende del sistema de escenas de macOS.
 
+## Enlaces inteligentes (inspirados en iTerm2, sin añadir peso)
+
+En el terminal, haz **⌘+clic** sobre una URL HTTP/HTTPS para abrirla en el navegador predeterminado. También puedes hacer clic derecho en el enlace y elegir **Abrir enlace** o **Copiar enlace**. No se añaden escáneres en segundo plano, servicios de red ni más pasadas Metal: se examina únicamente la fila pulsada. No se abren esquemas distintos de HTTP/HTTPS ni URLs con credenciales incrustadas. Todavía no se detectan algunos enlaces partidos entre dos líneas.
+
 ## Características
 
 | Área | Funcionalidades actuales | Limitaciones |
