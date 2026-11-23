@@ -537,7 +537,7 @@ struct MainWindow: View {
                                 ZStack {
                                     Circle()
                                         .fill(Color(hexRGB: item.color))
-                                        .frame(width: 3.5, height: 3.5)
+                                        .frame(width: 8, height: 8)
                                     ColorPicker("Color de sesión", selection: Binding(
                                         get: { Color(hexRGB: model.sessions.first(where: { $0.id == item.id })?.color ?? item.color) },
                                         set: { model.setColor($0, for: item.id) }
@@ -546,7 +546,7 @@ struct MainWindow: View {
                                     .blendMode(.destinationOver)
                                     .opacity(0.015)
                                 }
-                                .frame(width: 18, height: 18) // large enough to click; dot is 3.5pt
+                                .frame(width: 18, height: 18) // 18pt hit target, 8pt visible color dot
                                 .help("Cambiar color de la sesión")
                             }
                             .tag(item.id)
@@ -639,9 +639,12 @@ struct MainWindow: View {
                         description: Text("Crea una sesión o abre una sesión guardada."))
                 }
             }
-            .background(Color.clear)
+            // A fresh Cmd+N window has no terminal drawable yet. Keep its
+            // empty detail opaque, regardless of the saved terminal opacity.
+            .background(model.selected == nil
+                ? Color(nsColor: .textBackgroundColor) : Color.clear)
         }
-        .background(NiaWindowTransparency(opacity: terminalOpacity))
+        .background(NiaWindowTransparency(opacity: model.selected == nil ? 1.0 : terminalOpacity))
         .navigationTitle(model.selected ?? "nia_")
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
