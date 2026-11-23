@@ -12,6 +12,17 @@ nia_ is an **experimental native terminal for macOS** combining SwiftUI/AppKit c
 
 > **Development preview, not production-hardened.** Features such as remote sessions, ANSI reflow, and history restoration are still being validated. Back up your data before upgrading. No claims of audited security or measured resource savings are made.
 
+## Multi-window workspaces (experimental)
+
+- **⌘N** (File → New Window) opens an independent native nia_ window.
+- Each window has its own ordered tabs, split, focused pane and remembered layout.
+- All windows share one Rust PTY manager, so closing a tab does not delete shell history.
+- Open an existing session using the folder-plus button in the sidebar.
+- One session can be edited in only one window at a time to avoid conflicting PTY resizes.
+- Window layouts are stored in SQLite and included in encrypted backups.
+- The original layout is migrated once; new windows start empty.
+- macOS scene restoration is not guaranteed to recreate every previously closed window yet.
+
 ## Highlights
 
 | Area | Current capabilities | Important limits |
