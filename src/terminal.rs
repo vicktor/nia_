@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 use anyhow::{Context, Result};
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
-use std::{fs, io::{Read, Write}, num::NonZeroU16, path::{Path, PathBuf}, sync::mpsc::{self, Receiver}, thread};
+use std::{fs::{self, File}, io::{Read, Seek, SeekFrom, Write}, num::NonZeroU16, path::{Path, PathBuf}, sync::mpsc::{self, Receiver}, thread};
 use crate::{storage::SessionRecord, history::HistoryIndexer};
 
 pub struct LiveTerminal {
@@ -15,6 +15,10 @@ pub struct LiveTerminal {
     exit_request_path: Option<PathBuf>,
     exit_approval_path: Option<PathBuf>,
     pub exit_observed_polls: u8,
+    marks_file: Option<File>,
+    marks_offset: u64,
+    marks_buffer: Vec<u8>,
+    pending_mark: Option<(f64, String, String)>,
     pub _child: Box<dyn portable_pty::Child + Send + Sync>,
 }
 
@@ -84,8 +88,82 @@ impl LiveTerminal {
         } else { None };
         let exit_request_path = ai_request_path.as_ref().map(|_| session_base(&record.id).map(|p| p.join("exit-request"))).transpose()?;
         let exit_approval_path = ai_request_path.as_ref().map(|_| session_base(&record.id).map(|p| p.join("exit-approved"))).transpose()?;
-        Ok(Self { state_path, ai_request_path, exit_request_path, exit_approval_path, exit_observed_polls: 0, history_indexer: HistoryIndexer::default(), parser: vt100::Parser::new(NonZeroU16::new(rows).unwrap(), NonZeroU16::new(cols).unwrap(), scrollback_lines),
+        // Only local Zsh uses the zero-extra-process command metadata hooks.
+        // Keep one read handle open for the PTY lifetime to avoid repeated
+        // open/close operations while polling many sessions.
+        let marks_file = if ai_request_path.is_some() {
+            let path = session_base(&record.id)?.join("command-marks");
+            let file = fs::OpenOptions::new().read(true).write(true)
+                .create(true).truncate(true).open(path)?;
+            #[cfg(unix)] {
+                use std::os::unix::fs::PermissionsExt;
+                file.set_permissions(fs::Permissions::from_mode(0o600))?;
+            }
+            Some(file)
+        } else { None };
+        Ok(Self { state_path, ai_request_path, exit_request_path, exit_approval_path, exit_observed_polls: 0,
+            marks_file, marks_offset: 0, marks_buffer: Vec::new(), pending_mark: None,
+            history_indexer: HistoryIndexer::default(), parser: vt100::Parser::new(NonZeroU16::new(rows).unwrap(), NonZeroU16::new(cols).unwrap(), scrollback_lines),
             input: writer, master: pair.master, rx, _child: child })
+    }
+
+    /// Read only new appended metadata, capped to 64 KiB per poll. Hooks use
+    /// Zsh builtins and write NUL-framed values to avoid delimiter injections.
+    /// No command data is parsed during terminal drawing.
+    pub fn take_command_marks(&mut self) -> Result<Vec<(f64, i64, i64, String, String)>> {
+        let Some(file) = self.marks_file.as_mut() else { return Ok(Vec::new()) };
+        let len = file.metadata()?.len();
+        if len < self.marks_offset {
+            self.marks_offset = 0;
+            self.marks_buffer.clear();
+            self.pending_mark = None;
+        }
+        file.seek(SeekFrom::Start(self.marks_offset))?;
+        let mut buf = vec![0u8; 65536.min(len.saturating_sub(self.marks_offset) as usize)];
+        let count = file.read(&mut buf)?;
+        self.marks_offset += count as u64;
+        self.marks_buffer.extend_from_slice(&buf[..count]);
+        // A single command is limited to 8 KiB of metadata. If malformed or
+        // partial payload grows beyond this, discard it safely.
+        if self.marks_buffer.len() > 131072 {
+            self.marks_buffer.clear();
+            self.pending_mark = None;
+        }
+        let mut completed = Vec::new();
+        let mut consumed = 0;
+        loop {
+            let body = &self.marks_buffer[consumed..];
+            let kind = match body.first() { Some(&b'S') => b'S', Some(&b'E') => b'E', _ => break };
+            if body.get(1) != Some(&0) { break }
+            let needed = if kind == b'S' { 3 } else { 2 };
+            let mut cursor = 2;
+            let mut fields = Vec::with_capacity(needed);
+            for _ in 0..needed {
+                let Some(end) = body[cursor..].iter().position(|b| *b == 0) else { break };
+                let value = &body[cursor..cursor + end];
+                fields.push(String::from_utf8_lossy(value).into_owned());
+                cursor += end + 1;
+            }
+            if fields.len() != needed { break }
+            if kind == b'S' {
+                if let Ok(started) = fields[0].parse::<f64>() {
+                    if started.is_finite() && fields[1].len() <= 4096 && fields[2].len() <= 8192 {
+                        self.pending_mark = Some((started, fields[1].clone(), fields[2].clone()));
+                    }
+                }
+            } else if let Some((start, cwd, command)) = self.pending_mark.take() {
+                if let (Ok(end), Ok(status)) = (fields[0].parse::<f64>(), fields[1].parse::<i64>()) {
+                    if end.is_finite() && end >= start && end - start < 86400.0 * 7.0 {
+                        let duration_ms = ((end - start) * 1000.0).round() as i64;
+                        completed.push((start, duration_ms, status, cwd, command));
+                    }
+                }
+            }
+            consumed += cursor;
+            if consumed == self.marks_buffer.len() { break }
+        }
+        if consumed > 0 { self.marks_buffer.drain(..consumed); }
+        Ok(completed)
     }
 
     /// Zsh's accept-line widget writes an owner-only atomic request. Remove it
@@ -227,6 +305,19 @@ fn prepare_zsh_history(id: &str) -> Result<PathBuf> {
           command mv -f -- \"$tmp\" {2}\n\
         }}\n\
         autoload -Uz add-zsh-hook\n\
+        # Command timeline: built-in Zsh hooks, no subprocess or prompt edits.\n\
+        zmodload zsh/datetime 2>/dev/null\n\
+        function _nia_mark_start() {{\n\
+          builtin printf 'S\\0%s\\0%s\\0%s\\0' "$EPOCHREALTIME" "$PWD" "$1" >> {6}\n\
+        }}\n\
+        function _nia_mark_end() {{\n\
+          local exit_status=$?\n\
+          builtin printf 'E\\0%s\\0%s\\0' "$EPOCHREALTIME" "$exit_status" >> {6}\n\
+        }}\n\
+        add-zsh-hook preexec _nia_mark_start\n\
+        # Register the completion hook first: subsequent state hooks may\n\
+        # overwrite $? and would corrupt the command's exit status.\n\
+        add-zsh-hook precmd _nia_mark_end\n\
         add-zsh-hook precmd _ember_capture_state\n\
         # Nia AI: intercept only a ZLE command line that starts with ?.\n\
         # The question never reaches the shell execution path or HISTFILE.\n\
@@ -263,7 +354,8 @@ fn prepare_zsh_history(id: &str) -> Result<PathBuf> {
         }}\n\
         zle -N accept-line _nia_ai_accept_line\n",
         zsh_quote(&original_rc), zsh_quote(&history), zsh_quote(&base.join("state")), zsh_quote(&base.join("ai-request")),
-        zsh_quote(&base.join("exit-approved")), zsh_quote(&base.join("exit-request")));
+        zsh_quote(&base.join("exit-approved")), zsh_quote(&base.join("exit-request")),
+        zsh_quote(&base.join("command-marks")));
     fs::write(base.join(".zshrc"), content)?;
     Ok(base)
 }

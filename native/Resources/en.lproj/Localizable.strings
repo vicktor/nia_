@@ -171,3 +171,11 @@
 "Abrir enlace" = "Open link";
 "Copiar enlace" = "Copy link";
 "No hay sesiones guardadas" = "No saved sessions";
+"Historial de comandos" = "Command timeline";
+"Cerrar" = "Close";
+"Buscar comandos" = "Search commands";
+"Sin comandos registrados" = "No commands recorded";
+"Se registran los comandos completados en Zsh local." = "Completed commands from local Zsh are recorded here.";
+"Copiar" = "Copy";
+"Insertar" = "Insert";
+"Los comandos pueden contener datos sensibles. El historial se guarda localmente en SQLite." = "Commands may contain sensitive information. Timeline data is stored locally in SQLite.";

@@ -171,3 +171,11 @@
 "Abrir enlace" = "Abrir enlace";
 "Copiar enlace" = "Copiar enlace";
 "No hay sesiones guardadas" = "No hay sesiones guardadas";
+"Historial de comandos" = "Historial de comandos";
+"Cerrar" = "Cerrar";
+"Buscar comandos" = "Buscar comandos";
+"Sin comandos registrados" = "Sin comandos registrados";
+"Se registran los comandos completados en Zsh local." = "Se registran los comandos completados en Zsh local.";
+"Copiar" = "Copiar";
+"Insertar" = "Insertar";
+"Los comandos pueden contener datos sensibles. El historial se guarda localmente en SQLite." = "Los comandos pueden contener datos sensibles. El historial se guarda localmente en SQLite.";

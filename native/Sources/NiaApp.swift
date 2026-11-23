@@ -60,6 +60,17 @@ struct ScreenSnapshot: Decodable {
     let scrollback_offset: Int
 }
 
+struct NiaCommandMark: Decodable, Identifiable {
+    let id: Int64
+    let started_at: Double
+    let duration_ms: Int64
+    let exit_code: Int64
+    let cwd: String
+    let command: String
+}
+struct NiaTimelineTarget: Identifiable {
+    let id: String
+}
 struct NiaAIQuery: Decodable, Identifiable {
     let session_id: String
     let question: String
@@ -120,6 +131,7 @@ private extension FocusedValues {
     @Published var error: String?
     @Published var aiRequest: NiaAIQuery?
     @Published var pendingExitSession: String?
+    @Published var timelineTarget: NiaTimelineTarget?
     private var pendingAIRequests: [NiaAIQuery] = []
     @Published var sidebarVisibility: NavigationSplitViewVisibility = .all
     private var timer: Timer?
@@ -378,6 +390,16 @@ private extension FocusedValues {
             refreshSessions()
         }
     }
+    func showTimeline(for session: String? = nil) {
+        let id = session ?? (splitMode != "off" && activePane == 1 ? secondary : selected)
+        if let id { timelineTarget = NiaTimelineTarget(id: id) }
+    }
+    func commandMarks(for session: String) -> [NiaCommandMark] {
+        guard let handle else { return [] }
+        let raw = session.withCString { resultString(nia_command_marks(handle, $0)) }
+        guard let data = raw.data(using: .utf8) else { return [] }
+        return (try? JSONDecoder().decode([NiaCommandMark].self, from: data)) ?? []
+    }
     func selectSlot(_ number: Int) {
         if tabIDs.indices.contains(number) { activate(tabIDs[number]) }
     }
@@ -536,6 +558,10 @@ private struct NiaWindowRoot: View {
             }
             SidebarCommands()
             CommandGroup(after: .newItem) {
+                Button(NiaL10n.string("Historial de comandos")) {
+                    focusedModel?.showTimeline()
+                }
+                .keyboardShortcut("h", modifiers: [.command, .shift])
                 Button(NiaL10n.string("Mostrar/ocultar sesiones")) {
                     if let model = focusedModel {
                         model.sidebarVisibility = model.sidebarVisibility == .detailOnly ? .all : .detailOnly
@@ -648,6 +674,7 @@ struct MainWindow: View {
                             ))
                             .contextMenu {
                                 Button(LocalizedStringKey(item.closed ? "Abrir sesión" : "Cambiar a sesión")) { model.activate(item.id) }
+                                Button("Historial de comandos") { model.showTimeline(for: item.id) }
                                 if item.remote_host != nil {
                                     Button("Reconectar SSH") { model.reconnectRemote(item.id) }
                                 }
@@ -744,6 +771,14 @@ struct MainWindow: View {
                 .help("Abrir sesión guardada en esta ventana")
             }
         }
+        .sheet(item: $model.timelineTarget) { target in
+            NiaCommandTimeline(session: target.id, marks: model.commandMarks(for: target.id)) { command in
+                guard !command.contains("\n") && !command.contains("\r") else { return }
+                model.activate(target.id)
+                model.send(Array(command.utf8), to: target.id)
+                model.requestFocus(target.id)
+            }
+        }
         .sheet(isPresented: $showRemoteSetup) {
             VStack(alignment: .leading, spacing: 14) {
                 Text("Nueva sesión remota").font(.title2.bold())
@@ -837,6 +872,86 @@ struct MainWindow: View {
         model.create(newSession)
         newSession = ""
         addingSession = false
+    }
+}
+
+/// On-demand, bounded history of completed Zsh commands. No polling while
+/// the sheet is closed and no extra renderer or services.
+private struct NiaCommandTimeline: View {
+    let session: String
+    let marks: [NiaCommandMark]
+    let onInsert: (String) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var search = ""
+
+    private var visible: [NiaCommandMark] {
+        let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return marks }
+        return marks.filter {
+            $0.command.localizedCaseInsensitiveContains(query) ||
+            $0.cwd.localizedCaseInsensitiveContains(query)
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Label("Historial de comandos", systemImage: "clock.arrow.circlepath")
+                    .font(.title3.weight(.semibold))
+                Spacer()
+                Button("Cerrar") { dismiss() }
+            }
+            Text(session).font(.subheadline).foregroundStyle(.secondary)
+            TextField("Buscar comandos", text: $search)
+                .textFieldStyle(.roundedBorder)
+            if visible.isEmpty {
+                ContentUnavailableView("Sin comandos registrados", systemImage: "terminal",
+                    description: Text("Se registran los comandos completados en Zsh local."))
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 0) {
+                        ForEach(visible) { mark in
+                            VStack(alignment: .leading, spacing: 5) {
+                                Text(mark.command)
+                                    .font(.system(size: 12, design: .monospaced))
+                                    .textSelection(.enabled)
+                                Text(mark.cwd)
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                                HStack(spacing: 10) {
+                                    Text(Date(timeIntervalSince1970: mark.started_at)
+                                        .formatted(date: .abbreviated, time: .shortened))
+                                    Text(String(format: "%.2f s", Double(mark.duration_ms) / 1000.0))
+                                    Label(String(mark.exit_code),
+                                        systemImage: mark.exit_code == 0 ? "checkmark.circle" : "xmark.circle")
+                                        .foregroundStyle(mark.exit_code == 0 ? Color.green : Color.orange)
+                                    Spacer()
+                                    Button("Copiar") {
+                                        NSPasteboard.general.clearContents()
+                                        NSPasteboard.general.setString(mark.command, forType: .string)
+                                    }
+                                    Button("Insertar") {
+                                        onInsert(mark.command)
+                                        dismiss()
+                                    }
+                                    .disabled(mark.command.contains("\n") || mark.command.contains("\r"))
+                                }
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            }
+                            .padding(.vertical, 9)
+                            Divider()
+                        }
+                    }
+                }
+            }
+            Text("Los comandos pueden contener datos sensibles. El historial se guarda localmente en SQLite.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+        .padding(20)
+        .frame(minWidth: 610, idealWidth: 710, minHeight: 420, idealHeight: 560)
     }
 }
 
