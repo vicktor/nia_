@@ -55,6 +55,14 @@ En las sesiones Zsh locales, nia_ registra los **comandos completados** con fech
 - Inicialmente disponible para **Zsh local**. Es un historial consultable, todavía no marcas navegables dentro del scrollback ni reproducción temporal.
 - Los comandos pueden contener credenciales. Protege la base de datos y las copias.
 
+## Renombrar sesiones y recuperar espacios de trabajo
+
+- Doble clic sobre el nombre de una sesión en la barra lateral para editarlo. **Intro** guarda; **Escape** cancela. También disponible desde clic derecho → **Renombrar sesión**.
+- Los nombres son etiquetas independientes del ID estable guardadas en SQLite. Cambiar el nombre no altera la PTY, los comandos, el scrollback, el tmux remoto ni la distribución guardada.
+- Si macOS abre nia_ con un identificador de ventana nuevo, la primera ventana vuelve a recuperar todas las sesiones abiertas anteriormente. Se restauran las shells de todas las pestañas, no solo las visibles.
+- Si ejecutas `claude --resume <id>`, `codex resume <id>` o `gemini --resume <id>`, nia_ recuerda ese identificador mientras está activo y reutiliza el comando al recuperar la shell. Solo permite órdenes exactas y validadas; no ejecuta automáticamente comandos arbitrarios.
+- Para recuperar el agente deben estar instalados su CLI y los datos originales de su conversación. No se pueden identificar retroactivamente las conversaciones iniciadas **antes** de esta funcionalidad.
+
 ## Características
 
 | Área | Funcionalidades actuales | Limitaciones |

@@ -47,6 +47,12 @@ impl Store {
             CREATE TABLE IF NOT EXISTS session_colors (
               session_id TEXT PRIMARY KEY, color TEXT NOT NULL
             );
+            -- Display labels deliberately live apart from internal IDs:
+            -- PTYs, logs, command marks, SSH/tmux and workspaces keep using id.
+            CREATE TABLE IF NOT EXISTS session_titles (
+              session_id TEXT PRIMARY KEY REFERENCES sessions(id),
+              title TEXT NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS history_lines (
               session_id TEXT NOT NULL,
               line_no INTEGER NOT NULL,
@@ -104,6 +110,36 @@ impl Store {
     }
 
     // Separate table preserves the old sessions schema and backup compatibility.
+    pub fn session_title(&self, id: &str) -> Result<String> {
+        let title: Option<String> = self.conn.query_row(
+            "SELECT title FROM session_titles WHERE session_id=?1", [id], |r| r.get(0)
+        ).optional()?;
+        Ok(title.unwrap_or_else(|| id.to_owned()))
+    }
+
+    pub fn set_session_title(&self, id: &str, title: &str) -> Result<()> {
+        // A name must not ambiguously refer to another session. Compare
+        // case-insensitively against *both* stable IDs and display names.
+        let exists: i64 = self.conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sessions s
+              LEFT JOIN session_titles t ON t.session_id=s.id
+              WHERE s.id<>?1 AND
+                (s.id=?2 COLLATE NOCASE OR COALESCE(t.title,s.id)=?2 COLLATE NOCASE))",
+            params![id,title], |r| r.get(0)
+        )?;
+        if exists != 0 { anyhow::bail!("Another session already has that name") }
+        let updated = self.conn.execute(
+            "UPDATE sessions SET updated_at=CURRENT_TIMESTAMP WHERE id=?1", [id]
+        )?;
+        if updated == 0 { anyhow::bail!("Session not found") }
+        self.conn.execute(
+            "INSERT INTO session_titles(session_id,title) VALUES (?1,?2)
+             ON CONFLICT(session_id) DO UPDATE SET title=excluded.title",
+            params![id,title]
+        )?;
+        Ok(())
+    }
+
     pub fn session_color(&self, id: &str) -> Result<String> {
         let value: Option<String> = self.conn.query_row(
             "SELECT color FROM session_colors WHERE session_id=?1", [id], |r| r.get(0)

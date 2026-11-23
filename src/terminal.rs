@@ -19,6 +19,7 @@ pub struct LiveTerminal {
     marks_offset: u64,
     marks_buffer: Vec<u8>,
     pending_mark: Option<(f64, String, String)>,
+    agent_resume_path: Option<PathBuf>,
     pub _child: Box<dyn portable_pty::Child + Send + Sync>,
 }
 
@@ -101,10 +102,21 @@ impl LiveTerminal {
             }
             Some(file)
         } else { None };
-        Ok(Self { state_path, ai_request_path, exit_request_path, exit_approval_path, exit_observed_polls: 0,
-            marks_file, marks_offset: 0, marks_buffer: Vec::new(), pending_mark: None,
+        let agent_resume_path = if ai_request_path.is_some() {
+            Some(session_base(&record.id)?.join("agent-resume"))
+        } else { None };
+        let saved_agent = agent_resume_path.as_ref().and_then(|path|
+            fs::read_to_string(path).ok()).and_then(|line| validated_agent_resume(line.trim()));
+        let mut terminal = Self { state_path, ai_request_path, exit_request_path, exit_approval_path, exit_observed_polls: 0,
+            marks_file, marks_offset: 0, marks_buffer: Vec::new(), pending_mark: None, agent_resume_path,
             history_indexer: HistoryIndexer::default(), parser: vt100::Parser::new(NonZeroU16::new(rows).unwrap(), NonZeroU16::new(cols).unwrap(), scrollback_lines),
-            input: writer, master: pair.master, rx, _child: child })
+            input: writer, master: pair.master, rx, _child: child };
+        // Only a previously observed explicit resume command is replayed.
+        // Never replay arbitrary shell history or unvalidated input.
+        if let Some(command) = saved_agent {
+            terminal.send(format!("{command}\r").as_bytes())?;
+        }
+        Ok(terminal)
     }
 
     /// Read only new appended metadata, capped to 64 KiB per poll. Hooks use
@@ -148,10 +160,29 @@ impl LiveTerminal {
             if kind == b'S' {
                 if let Ok(started) = fields[0].parse::<f64>() {
                     if started.is_finite() && fields[1].len() <= 4096 && fields[2].len() <= 8192 {
+                        // Remember the explicit resume command while the CLI is
+                        // still running, not only once it returns to the prompt.
+                        if let Some(path) = &self.agent_resume_path {
+                            if let Some(command) = validated_agent_resume(&fields[2]) {
+                                let temp = path.with_extension("tmp");
+                                fs::write(&temp, command)?;
+                                #[cfg(unix)] {
+                                    use std::os::unix::fs::PermissionsExt;
+                                    fs::set_permissions(&temp, fs::Permissions::from_mode(0o600))?;
+                                }
+                                fs::rename(temp, path)?;
+                            } else {
+                                let _ = fs::remove_file(path);
+                            }
+                        }
                         self.pending_mark = Some((started, fields[1].clone(), fields[2].clone()));
                     }
                 }
             } else if let Some((start, cwd, command)) = self.pending_mark.take() {
+                // Once the agent has exited, restarting it would be wrong.
+                if let Some(path) = &self.agent_resume_path {
+                    let _ = fs::remove_file(path);
+                }
                 if let (Ok(end), Ok(status)) = (fields[0].parse::<f64>(), fields[1].parse::<i64>()) {
                     if end.is_finite() && end >= start && end - start < 86400.0 * 7.0 {
                         let duration_ms = ((end - start) * 1000.0).round() as i64;
@@ -234,6 +265,23 @@ impl LiveTerminal {
         self.parser.set_size(NonZeroU16::new(rows).unwrap(), NonZeroU16::new(cols).unwrap());
         Ok(())
     }
+}
+
+/// Fail-closed recognition of commands the user explicitly ran to resume
+/// a known agent conversation. An arbitrary command is NEVER re-executed.
+fn validated_agent_resume(source: &str) -> Option<String> {
+    let parts: Vec<&str> = source.split_ascii_whitespace().collect();
+    let (provider, id) = match parts.as_slice() {
+        ["claude", "--resume", id] => ("claude --resume", *id),
+        ["codex", "resume", id] => ("codex resume", *id),
+        ["gemini", "--resume", id] => ("gemini --resume", *id),
+        _ => return None,
+    };
+    if !(8..=128).contains(&id.len()) ||
+        !id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_') {
+        return None;
+    }
+    Some(format!("{provider} {id}"))
 }
 
 // Stable and filesystem-safe per-session directory. Session IDs can contain unicode.
@@ -370,6 +418,15 @@ mod history_tests {
     #[test]
     fn tmux_name_is_shell_safe_and_deterministic() {
         assert_eq!(remote_tmux_name("a'b"), "nia-612762");
+    }
+    #[test]
+    fn agent_resume_accepts_explicit_safe_ids_only() {
+        let id = "123e4567-e89b-12d3-a456-426614174000";
+        assert_eq!(validated_agent_resume(&format!("claude --resume {id}")),
+                   Some(format!("claude --resume {id}")));
+        assert!(validated_agent_resume("claude --resume x; rm -rf ~").is_none());
+        assert!(validated_agent_resume("sudo claude --resume 123e4567").is_none());
+        assert!(validated_agent_resume("claude --continue").is_none());
     }
     #[test]
     fn ids_have_distinct_history_paths() {

@@ -55,6 +55,14 @@ In a local Zsh session, nia_ records **completed commands** together with their 
 - Initial implementation tracks **local Zsh only**. This is a searchable command log, not yet in-terminal scrollback anchors or time travel.
 - Commands may contain credentials. Treat the database and backups as sensitive.
 
+## Session rename and workspace recovery
+
+- Double-click a session name in the sidebar to edit its display title in place. **Return** saves; **Escape** cancels. Right-click → **Rename session** is also available.
+- Titles are aliases stored separately in SQLite. Renaming never changes the session's stable ID, PTY, command history, scrollback, remote tmux name, or saved window layout.
+- If macOS starts with a fresh scene identifier, the first window now recovers all previously open sessions rather than appearing empty. Every recovered tab gets its shell restored, not just the currently visible split panes.
+- Explicitly launched conversations using `claude --resume <id>`, `codex resume <id>`, or `gemini --resume <id>` are remembered while running and re-invoked on shell recovery. Only validated exact resume commands are eligible; arbitrary commands are never replayed.
+- Agent session recovery requires the relevant CLI and its own conversation data on this Mac. Existing conversations launched **before** this feature cannot be identified retroactively.
+
 ## Highlights
 
 | Area | Current capabilities | Important limits |
