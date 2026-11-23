@@ -635,7 +635,7 @@ final class NiaMetalView: MTKView, MTKViewDelegate {
         onFocus?()
         let menu = NSMenu(title: "Insertar en terminal")
         func item(_ title: String, _ action: Selector) {
-            let entry = NSMenuItem(title: title, action: action, keyEquivalent: "")
+            let entry = NSMenuItem(title: NSLocalizedString(title, comment: "Terminal context menu"), action: action, keyEquivalent: "")
             entry.target = self
             menu.addItem(entry)
         }
