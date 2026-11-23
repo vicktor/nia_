@@ -81,9 +81,9 @@ private enum NiaAIError: LocalizedError {
     case invalidEndpoint, missingKey, invalidAnswer, response(String), internalTooSmall
     var errorDescription: String? {
         switch self {
-        case .invalidEndpoint: return NSLocalizedString("La URL debe ser HTTPS, o HTTP en localhost para un modelo local.", comment: "")
-        case .missingKey: return NSLocalizedString("Configura la API key en Preferencias → IA.", comment: "")
-        case .invalidAnswer: return NSLocalizedString("No se obtuvo un único comando fiable. Prueba un modelo más capaz y revisa manualmente la tarea.", comment: "")
+        case .invalidEndpoint: return NiaL10n.string("La URL debe ser HTTPS, o HTTP en localhost para un modelo local.")
+        case .missingKey: return NiaL10n.string("Configura la API key en Preferencias → IA.")
+        case .invalidAnswer: return NiaL10n.string("No se obtuvo un único comando fiable. Prueba un modelo más capaz y revisa manualmente la tarea.")
         case .internalTooSmall: return NSLocalizedString("El modelo Interno (0,5B) solo crea comandos simples Bash/Zsh. Esta petición requiere un modelo mayor: selecciona Local con un modelo más capaz, OpenAI, Claude o Gemini en Preferencias → IA. No se ejecutó nada.", comment: "")
         case .response(let description): return description
         }
