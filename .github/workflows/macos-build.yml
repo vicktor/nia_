@@ -46,6 +46,11 @@ jobs:
           python3 scripts/check-website.py
           git diff --exit-code -- docs
 
+      - name: Test project favicon discovery
+        run: |
+          swiftc native/Sources/NiaProjectIcon.swift native/Tests/NiaProjectIconTests.swift -o /tmp/nia-project-icon-tests
+          /tmp/nia-project-icon-tests
+
       - name: Test window placement restoration
         run: |
           swiftc native/Sources/NiaWindowPlacement.swift native/Tests/NiaWindowPlacementTests.swift -o /tmp/nia-window-placement-tests

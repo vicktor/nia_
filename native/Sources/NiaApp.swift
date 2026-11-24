@@ -730,8 +730,9 @@ struct MainWindow: View {
                                 || $0.id.localizedCaseInsensitiveContains(filter)
                         }) { item in
                             HStack(spacing: 8) {
-                                Image(systemName: item.closed ? "archivebox" : (item.remote_host == nil ? "terminal" : "network"))
-                                    .foregroundStyle(Color(hexRGB: item.color))
+                                NiaSessionIcon(directory: item.remote_host == nil && !item.closed ? item.cwd : nil,
+                                    fallback: item.closed ? "archivebox" : (item.remote_host == nil ? "terminal" : "network"),
+                                    color: Color(hexRGB: item.color))
                                 VStack(alignment: .leading, spacing: 3) {
                                     if editingSession == item.id {
                                         TextField("Nombre de sesión", text: $editedTitle)

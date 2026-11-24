@@ -25,6 +25,7 @@ nia_ es un **terminal experimental nativo para macOS** que combina una interfaz 
 
 - **⌘N** (Archivo → Nueva ventana) abre otra ventana nativa de nia_.
 - Cada ventana tiene pestañas ordenadas, split, foco y distribución independientes.
+- Las sesiones locales muestran el `favicon.*` del proyecto (también `favicon-*.png`, etc.) si existe en su carpeta de trabajo o hasta dos niveles de subcarpetas. Se excluyen la carpeta personal y carpetas generales como Documents/Downloads. La búsqueda y la decodificación de miniaturas se ejecutan en una cola de fondo limitada, con presupuesto de tiempo/entradas y caché de resultados y ausencias; se omiten carpetas ocultas, dependencias, compilaciones, enlaces simbólicos, volúmenes de red y archivos solo disponibles en la nube. Se admiten PNG, ICO, SVG autocontenidos y formatos de imagen habituales. El icono sigue los cambios de directorio; las sesiones remotas o sin icono conservan el símbolo normal. No se modifican los iconos de Finder.
 - Al mover o redimensionar una ventana se guardan su posición y tamaño en este Mac. Al abrirla se recuperan esos datos; si macOS crea una escena nueva, se usa la última posición guardada. Si se desconecta un monitor, la ventana se ajusta a una pantalla disponible. Entrar o salir de pantalla completa conserva las dimensiones de la ventana normal.
 - Todas las ventanas del mismo proceso de la aplicación comparten un único motor Rust/PTY; cerrar una pestaña no elimina su historial.
 - Usa el botón de carpeta con «+» para recuperar sesiones guardadas.

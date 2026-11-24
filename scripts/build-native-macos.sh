@@ -71,6 +71,7 @@ swiftc -O -parse-as-library \
     native/Sources/NiaUpdateModels.swift native/Sources/NiaUpdateInstallation.swift native/Sources/NiaUpdateService.swift native/Sources/NiaUpdater.swift \
     native/Sources/NiaGitHubCLI.swift \
     native/Sources/NiaWindowPlacement.swift \
+    native/Sources/NiaProjectIcon.swift \
     native/Sources/NiaFonts.swift \
     native/Sources/NiaSyncEngine.swift native/Sources/NiaSync.swift \
     native/Sources/NiaGoogleOAuth.swift native/Sources/NiaGoogleDrive.swift native/Sources/NiaGoogleDriveView.swift \
@@ -109,7 +110,7 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
   <key>CFBundleExecutable</key><string>nia</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleIconFile</key><string>nia_.icns</string>
-  <key>CFBundleShortVersionString</key><string>0.8.4</string>
+  <key>CFBundleShortVersionString</key><string>0.8.5</string>
   <key>CFBundleVersion</key><string>1</string>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>NSHighResolutionCapable</key><true/>
