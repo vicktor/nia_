@@ -155,7 +155,7 @@ private extension NiaSharedCore {
         NiaSharedCore.testPump()
     }
     static func session(_ id: String, closed: Bool = false) -> SessionEntry {
-        SessionEntry(id: id, display_name: id, cwd: "/tmp/nia-test", closed: closed,
+        SessionEntry(id: id, display_name: id, cwd: "/tmp/nia-test", closed: closed, dismissed: nil,
                      venv: nil, color: "blue", remote_host: nil)
     }
     @MainActor static func cadence() {

@@ -29,6 +29,7 @@ int32_t nia_create_session(void *core, const char *name);
 int32_t nia_create_remote_session(void *core, const char *name, const char *ssh_host);
 int32_t nia_reconnect_remote_session(void *core, const char *name);
 int32_t nia_open_session(void *core, const char *name);
+int32_t nia_dismiss_session(void *core, const char *name);
 int32_t nia_archive_session(void *core, const char *name);
 int32_t nia_send(void *core, const char *name, const uint8_t *data, size_t len);
 int32_t nia_resize(void *core, const char *name, uint16_t rows, uint16_t cols);

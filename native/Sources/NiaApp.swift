@@ -23,6 +23,7 @@ struct SessionEntry: Decodable, Identifiable, Hashable {
     let display_name: String
     let cwd: String
     let closed: Bool
+    let dismissed: Bool?
     let venv: String?
     let color: String
     let remote_host: String?
@@ -255,6 +256,12 @@ private extension FocusedValues {
 
     private func restoreWorkspace() {
         guard let handle, let windowID else { return }
+        // Another window may have closed a tab since this model was created.
+        guard let entries = NiaSharedCore.sessionEntries() else {
+            error = NiaL10n.string(resultString(nia_last_error(handle)))
+            return
+        }
+        sessions = entries
         let raw = windowID.withCString { resultString(nia_window_workspace(handle, $0)) }
         var saved = raw.data(using: .utf8).flatMap {
             try? JSONDecoder().decode(WorkspaceLayout.self, from: $0)
@@ -267,14 +274,15 @@ private extension FocusedValues {
             }
             UserDefaults.standard.set(true, forKey: "nia.workspace.migrated")
         }
-        let existing = Set(sessions.map(\.id))
+        let restorable = sessions.filter { !$0.closed && $0.dismissed != true }
+        let existing = Set(restorable.map(\.id))
         // SceneStorage may provide a new UUID on relaunch, even when older
         // windows and their per-window layouts remain in SQLite. Recover all
         // open sessions into the first window as a safe fallback. Additional
         // Cmd+N windows still start empty, because those IDs are claimed.
         let firstWindowWithoutLayout = saved == nil && NiaSharedCore.owners.isEmpty
         let candidates = saved?.tabs ?? (firstWindowWithoutLayout
-            ? sessions.filter { !$0.closed }.map(\.id)
+            ? restorable.map(\.id)
             : [])
         var accepted: [String] = []
         for id in candidates where existing.contains(id) && !accepted.contains(id) {
@@ -386,7 +394,9 @@ private extension FocusedValues {
     }
     func archive(_ name: String) {
         // Closing a window's tab does not terminate a PTY or delete its history.
-        guard let windowID else { return }
+        guard let handle, let windowID, tabIDs.contains(name) else { return }
+        // Persist first, so even an old layout cannot resurrect this tab.
+        guard report(name.withCString { nia_dismiss_session(handle, $0) }) else { return }
         tabIDs.removeAll { $0 == name }
         NiaSharedCore.release(name, window: windowID)
         frames.removeValue(forKey: name)

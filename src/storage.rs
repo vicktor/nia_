@@ -69,6 +69,10 @@ impl Store {
               session_id TEXT PRIMARY KEY REFERENCES sessions(id),
               title TEXT NOT NULL
             );
+            -- Tab removal is independent of the PTY's lifetime.
+            CREATE TABLE IF NOT EXISTS dismissed_sessions (
+              session_id TEXT PRIMARY KEY REFERENCES sessions(id)
+            );
             CREATE TABLE IF NOT EXISTS history_lines (
               session_id TEXT NOT NULL,
               line_no INTEGER NOT NULL,
@@ -338,6 +342,26 @@ impl Store {
     pub fn close(&self, id: &str) -> Result<()> {
         self.conn.execute("UPDATE sessions SET closed=1,updated_at=CURRENT_TIMESTAMP WHERE id=?1", [id])?;
         Ok(())
+    }
+
+    pub(crate) fn dismiss_session(&self, id: &str) -> Result<()> {
+        let exists: bool = self.conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sessions WHERE id=?1)", [id], |row| row.get(0),
+        )?;
+        anyhow::ensure!(exists, "Session not found");
+        self.conn.execute("INSERT OR IGNORE INTO dismissed_sessions(session_id) VALUES (?1)", [id])?;
+        Ok(())
+    }
+
+    pub(crate) fn allow_session_restore(&self, id: &str) -> Result<()> {
+        self.conn.execute("DELETE FROM dismissed_sessions WHERE session_id=?1", [id])?;
+        Ok(())
+    }
+
+    pub(crate) fn dismissed_sessions(&self) -> Result<std::collections::HashSet<String>> {
+        let mut statement = self.conn.prepare("SELECT session_id FROM dismissed_sessions")?;
+        let rows = statement.query_map([], |row| row.get(0))?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
 
     // Internal path names are not derived directly from user input.
@@ -663,6 +687,28 @@ impl Store {
 #[cfg(test)]
 mod history_navigation_tests {
     use super::*;
+
+    #[test]
+    fn tab_dismissal_migrates_old_databases_and_is_independent_per_session() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::for_tests(temp.path().to_path_buf()).unwrap();
+        for id in ["left", "right", "removed"] {
+            store.upsert(&SessionRecord { id: id.into(), cwd: "/tmp".into(), venv: None, closed: false }).unwrap();
+        }
+        store.conn.execute_batch("DROP TABLE dismissed_sessions").unwrap();
+        drop(store);
+        let store = Store::for_tests(temp.path().to_path_buf()).unwrap();
+        assert!(store.dismissed_sessions().unwrap().is_empty());
+        store.dismiss_session("left").unwrap();
+        store.dismiss_session("removed").unwrap();
+        assert!(store.dismiss_session("unknown").is_err());
+        drop(store);
+        let restarted = Store::for_tests(temp.path().to_path_buf()).unwrap();
+        assert_eq!(restarted.dismissed_sessions().unwrap().len(), 2);
+        restarted.allow_session_restore("left").unwrap();
+        assert_eq!(restarted.dismissed_sessions().unwrap(), ["removed".to_string()].into());
+        assert_eq!(restarted.list().unwrap().len(), 3);
+    }
 
     fn legacy_store() -> (tempfile::TempDir, Store, i64) {
         let temp = tempfile::tempdir().unwrap();

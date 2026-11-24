@@ -84,7 +84,7 @@ pub struct NiaCore {
 struct AIQuery { session_id: String, question: String }
 
 #[derive(Serialize)]
-struct SessionInfo<'a> { id: &'a str, display_name: String, cwd: &'a str, closed: bool, venv: &'a Option<String>, color: String, remote_host: Option<String> }
+struct SessionInfo<'a> { id: &'a str, display_name: String, cwd: &'a str, closed: bool, dismissed: bool, venv: &'a Option<String>, color: String, remote_host: Option<String> }
 #[derive(Serialize, Clone)]
 struct CellData { t: String, fg: i32, bg: i32, flags: u8, wide: bool, continuation: bool }
 #[derive(Serialize)]
@@ -446,6 +446,8 @@ impl NiaCore {
                 .map_err(|e| e.to_string())?;
             self.install_live(id, term);
         }
+        // Only a successful open makes a removed tab restorable again.
+        self.store.allow_session_restore(id).map_err(|e| e.to_string())?;
         Ok(())
     }
 
@@ -564,8 +566,12 @@ pub unsafe extern "C" fn nia_command_marks(p: *mut NiaCore, session: *const c_ch
 #[no_mangle]
 pub unsafe extern "C" fn nia_sessions(p: *mut NiaCore) -> *mut c_char {
     if p.is_null() { return to_c("[]"); }
-    let core = &*p;
-    let records: Vec<_> = core.records.iter().map(|r| SessionInfo { id: &r.id, display_name: core.store.session_title(&r.id).unwrap_or_else(|_| r.id.clone()), cwd: &r.cwd, closed: r.closed, venv: &r.venv, color: core.store.session_color(&r.id).unwrap_or_else(|_| "#648ACA".to_string()), remote_host: core.store.remote_host(&r.id).ok().flatten() }).collect();
+    let core = &mut *p;
+    let dismissed = match core.store.dismissed_sessions() {
+        Ok(ids) => ids,
+        Err(error) => { core.set_error(error); return to_c("null"); }
+    };
+    let records: Vec<_> = core.records.iter().map(|r| SessionInfo { id: &r.id, display_name: core.store.session_title(&r.id).unwrap_or_else(|_| r.id.clone()), cwd: &r.cwd, closed: r.closed, dismissed: dismissed.contains(&r.id), venv: &r.venv, color: core.store.session_color(&r.id).unwrap_or_else(|_| "#648ACA".to_string()), remote_host: core.store.remote_host(&r.id).ok().flatten() }).collect();
     json(&records)
 }
 /// Returns the atomic workspace layout saved in the existing Nia database.
@@ -786,6 +792,21 @@ pub unsafe extern "C" fn nia_reconnect_remote_session(
     match core.open(id) {
         Ok(()) => 0,
         Err(e) => core.set_error(e),
+    }
+}
+
+/// Persist tab removal without terminating its PTY or deleting history.
+#[no_mangle]
+pub unsafe extern "C" fn nia_dismiss_session(p: *mut NiaCore, name: *const c_char) -> c_int {
+    if p.is_null() { return -1; }
+    let core = &mut *p;
+    let id = match text_arg(name) {
+        Ok(id) => id,
+        Err(error) => return core.set_error(error),
+    };
+    match core.store.dismiss_session(id) {
+        Ok(()) => 0,
+        Err(error) => core.set_error(error),
     }
 }
 
@@ -1749,6 +1770,45 @@ mod command_navigation_tests {
         fixture.core.install_live("test", terminal);
         let reopened = binary_snapshot(&mut fixture, original).unwrap().0;
         assert!(reopened > original);
+    }
+
+    #[test]
+    fn dismissed_tab_survives_reload_without_terminating_pty_or_erasing_history() {
+        let mut fixture = Fixture::new(b"preserved history\r\n", 10);
+        fixture.core.store.upsert(&fixture.core.records[0]).unwrap();
+        let generation = fixture.core.screen_generations["test"];
+        assert_eq!(unsafe { nia_dismiss_session(&mut fixture.core, fixture.session.as_ptr()) }, 0);
+        assert_eq!(unsafe { nia_dismiss_session(&mut fixture.core, fixture.session.as_ptr()) }, 0);
+        assert!(fixture.core.live.contains_key("test"));
+        assert_eq!(fixture.core.screen_generations["test"], generation);
+        assert!(!fixture.core.records[0].closed);
+
+        // A later background shell-state write must not undo tab removal.
+        fixture.core.store.update_shell_state(&fixture.core.records[0]).unwrap();
+        let reloaded = Store::for_tests(fixture._temp.path().to_path_buf()).unwrap();
+        assert!(reloaded.dismissed_sessions().unwrap().contains("test"));
+        assert!(!reloaded.list().unwrap()[0].closed);
+        assert_eq!(std::fs::read(reloaded.log_path("test")).unwrap(), b"preserved history\r\n");
+        let payload = unsafe { CString::from_raw(nia_sessions(&mut fixture.core)) };
+        let entries: serde_json::Value = serde_json::from_str(payload.to_str().unwrap()).unwrap();
+        assert_eq!(entries[0]["dismissed"], true);
+
+        assert_eq!(unsafe { nia_open_session(&mut fixture.core, fixture.session.as_ptr()) }, 0);
+        assert!(!reloaded.dismissed_sessions().unwrap().contains("test"));
+        assert_eq!(fixture.core.screen_generations["test"], generation);
+        assert!(fixture.core.live.contains_key("test"));
+    }
+
+    #[test]
+    fn dismiss_failure_does_not_kill_session_or_return_restorable_metadata() {
+        let mut fixture = Fixture::fresh(10);
+        fixture.core.store.upsert(&fixture.core.records[0]).unwrap();
+        fixture.core.store.conn.execute_batch("DROP TABLE dismissed_sessions").unwrap();
+        assert_ne!(unsafe { nia_dismiss_session(&mut fixture.core, fixture.session.as_ptr()) }, 0);
+        assert!(fixture.core.live.contains_key("test"));
+        let payload = unsafe { CString::from_raw(nia_sessions(&mut fixture.core)) };
+        assert_eq!(payload.to_str().unwrap(), "null");
+        assert!(!fixture.core.last_error.is_empty());
     }
 
     #[test]
