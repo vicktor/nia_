@@ -1,0 +1,143 @@
+[
+  {
+    "id": "jetbrainsmono",
+    "files": [
+      {
+        "name": "JetBrainsMono[wght].ttf",
+        "url": "https://raw.githubusercontent.com/google/fonts/06bfe0d62a98375cb09c942fa18e68bd32cff057/ofl/jetbrainsmono/JetBrainsMono%5Bwght%5D.ttf",
+        "size": 187208,
+        "sha256": "48715a42ec242c21e9f02692891e147d022299a52e48d5e413e1a942193ffeda"
+      },
+      {
+        "name": "JetBrainsMono-Italic[wght].ttf",
+        "url": "https://raw.githubusercontent.com/google/fonts/06bfe0d62a98375cb09c942fa18e68bd32cff057/ofl/jetbrainsmono/JetBrainsMono-Italic%5Bwght%5D.ttf",
+        "size": 191556,
+        "sha256": "85ae2a5cd3f56baf1ce1c21a851322c58e3d8fbe8e8ad4a4d090a820dd7fe558"
+      },
+      {
+        "name": "OFL.txt",
+        "url": "https://raw.githubusercontent.com/google/fonts/06bfe0d62a98375cb09c942fa18e68bd32cff057/ofl/jetbrainsmono/OFL.txt",
+        "size": 4399,
+        "sha256": "b2fe5e8987594e9ffd1d2ca52a2f5d73eb8335243893c5d6254b5ad69269591d"
+      }
+    ],
+    "name": "JetBrains Mono",
+    "summary": "Caracteres fáciles de distinguir y altura generosa.",
+    "homepage": "https://www.jetbrains.com/lp/mono/",
+    "regularFile": "JetBrainsMono[wght].ttf"
+  },
+  {
+    "id": "firacode",
+    "files": [
+      {
+        "name": "FiraCode[wght].ttf",
+        "url": "https://raw.githubusercontent.com/google/fonts/06bfe0d62a98375cb09c942fa18e68bd32cff057/ofl/firacode/FiraCode%5Bwght%5D.ttf",
+        "size": 260364,
+        "sha256": "9335b082b3c7850d98a64b584f3417f65355f3471278bb5eeb8c6c0e8657aeeb"
+      },
+      {
+        "name": "OFL.txt",
+        "url": "https://raw.githubusercontent.com/google/fonts/06bfe0d62a98375cb09c942fa18e68bd32cff057/ofl/firacode/OFL.txt",
+        "size": 4391,
+        "sha256": "926041dac670e6922505e35ac1661a4e8d20f1ffeabbbcb5edb5544370702369"
+      }
+    ],
+    "name": "Fira Code",
+    "summary": "Diseñada para código, con un dibujo claro y compacto.",
+    "homepage": "https://github.com/tonsky/FiraCode",
+    "regularFile": "FiraCode[wght].ttf"
+  },
+  {
+    "id": "cascadiacode",
+    "files": [
+      {
+        "name": "CascadiaCode[wght].ttf",
+        "url": "https://raw.githubusercontent.com/google/fonts/06bfe0d62a98375cb09c942fa18e68bd32cff057/ofl/cascadiacode/CascadiaCode%5Bwght%5D.ttf",
+        "size": 727940,
+        "sha256": "30f2e14a5c389b346b1fce110c4ddcf0dc5ce8265faf5eca2ab7323f49dba590"
+      },
+      {
+        "name": "CascadiaCode-Italic[wght].ttf",
+        "url": "https://raw.githubusercontent.com/google/fonts/06bfe0d62a98375cb09c942fa18e68bd32cff057/ofl/cascadiacode/CascadiaCode-Italic%5Bwght%5D.ttf",
+        "size": 530444,
+        "sha256": "33559b4beb60523b824e25a416b5de2779a9bc7c7ce32ce128490b42acbf4681"
+      },
+      {
+        "name": "OFL.txt",
+        "url": "https://raw.githubusercontent.com/google/fonts/06bfe0d62a98375cb09c942fa18e68bd32cff057/ofl/cascadiacode/OFL.txt",
+        "size": 4395,
+        "sha256": "82c05d6c53dfa0c9025985c19e371810020b74ed2c61d51d370f2a8ab2506d52"
+      }
+    ],
+    "name": "Cascadia Code",
+    "summary": "La familia de Microsoft para terminales y editores.",
+    "homepage": "https://github.com/microsoft/cascadia-code",
+    "regularFile": "CascadiaCode[wght].ttf"
+  },
+  {
+    "id": "ibmplexmono",
+    "files": [
+      {
+        "name": "IBMPlexMono-Regular.ttf",
+        "url": "https://raw.githubusercontent.com/google/fonts/06bfe0d62a98375cb09c942fa18e68bd32cff057/ofl/ibmplexmono/IBMPlexMono-Regular.ttf",
+        "size": 135580,
+        "sha256": "6a3412f058c7d8dfd9170c41e85ade48e5156ecb89356110ca57a0a27734af46"
+      },
+      {
+        "name": "IBMPlexMono-Bold.ttf",
+        "url": "https://raw.githubusercontent.com/google/fonts/06bfe0d62a98375cb09c942fa18e68bd32cff057/ofl/ibmplexmono/IBMPlexMono-Bold.ttf",
+        "size": 137784,
+        "sha256": "ac27abd6450a64dd94467580a02fe6235156d5b92f2926ebbc8e7489df64e0be"
+      },
+      {
+        "name": "IBMPlexMono-Italic.ttf",
+        "url": "https://raw.githubusercontent.com/google/fonts/06bfe0d62a98375cb09c942fa18e68bd32cff057/ofl/ibmplexmono/IBMPlexMono-Italic.ttf",
+        "size": 143920,
+        "sha256": "3362fc791b0652193328b862c1c5f23a789bc7288b1617fa63302f88689a2a34"
+      },
+      {
+        "name": "IBMPlexMono-BoldItalic.ttf",
+        "url": "https://raw.githubusercontent.com/google/fonts/06bfe0d62a98375cb09c942fa18e68bd32cff057/ofl/ibmplexmono/IBMPlexMono-BoldItalic.ttf",
+        "size": 144512,
+        "sha256": "af4e05a761e98c1adf064c48a6352c9bec1a6ad70982cd2a544149323391f98e"
+      },
+      {
+        "name": "OFL.txt",
+        "url": "https://raw.githubusercontent.com/google/fonts/06bfe0d62a98375cb09c942fa18e68bd32cff057/ofl/ibmplexmono/OFL.txt",
+        "size": 4456,
+        "sha256": "7e6b2818edbd8f6a01ae80641cc8f16a51080d08fb4e532be3a0b6f74adb07da"
+      }
+    ],
+    "name": "IBM Plex Mono",
+    "summary": "Formas reconocibles y un estilo técnico sobrio.",
+    "homepage": "https://github.com/IBM/plex",
+    "regularFile": "IBMPlexMono-Regular.ttf"
+  },
+  {
+    "id": "sourcecodepro",
+    "files": [
+      {
+        "name": "SourceCodePro[wght].ttf",
+        "url": "https://raw.githubusercontent.com/google/fonts/06bfe0d62a98375cb09c942fa18e68bd32cff057/ofl/sourcecodepro/SourceCodePro%5Bwght%5D.ttf",
+        "size": 212340,
+        "sha256": "b400fc584e10aff25d0e775ce181b4fc1c5ea1b5dc37b81aeb2084375b945790"
+      },
+      {
+        "name": "SourceCodePro-Italic[wght].ttf",
+        "url": "https://raw.githubusercontent.com/google/fonts/06bfe0d62a98375cb09c942fa18e68bd32cff057/ofl/sourcecodepro/SourceCodePro-Italic%5Bwght%5D.ttf",
+        "size": 174852,
+        "sha256": "6db77d25aa7b30eff449305b5c998e475694c74d398421127ea5a60f536413cd"
+      },
+      {
+        "name": "OFL.txt",
+        "url": "https://raw.githubusercontent.com/google/fonts/06bfe0d62a98375cb09c942fa18e68bd32cff057/ofl/sourcecodepro/OFL.txt",
+        "size": 4622,
+        "sha256": "cb30d3086a8b3ce0b9e3690bf48d6620402b61160bc658076f95180ccd9e9dae"
+      }
+    ],
+    "name": "Source Code Pro",
+    "summary": "La familia de Adobe para lectura prolongada de código.",
+    "homepage": "https://github.com/adobe-fonts/source-code-pro",
+    "regularFile": "SourceCodePro[wght].ttf"
+  }
+]

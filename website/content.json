@@ -1,0 +1,550 @@
+{
+  "es": {
+    "lang": "es",
+    "otherLang": "en",
+    "otherLabel": "English",
+    "otherPath": "en/",
+    "title": "nia_ — Tu terminal. Tu memoria.",
+    "description": "Un terminal nativo para macOS con sesiones persistentes, historial, IA opcional y una visión de continuidad entre Macs. Descubre la beta de nia_ y su hoja de ruta.",
+    "skip": "Saltar al contenido",
+    "navFeatures": "Funciones",
+    "navContinuity": "Entre Macs",
+    "navRoadmap": "Hoja de ruta",
+    "navBeta": "Explorar la beta",
+    "eyebrow": "NATIVO PARA MACOS · EN BETA",
+    "heroTitle": "Tu terminal.<br><span>Tu memoria.</span>",
+    "heroBody": "Un lugar para tus proyectos, tus shells y todo lo que pasa entre un comando y el siguiente. Hecho para Mac, con memoria de lo que estabas haciendo.",
+    "heroPrimary": "Descubrir nia_",
+    "heroSecondary": "Ver versiones en GitHub",
+    "heroNote": "macOS 14+ · SwiftUI + Metal + Rust · MPL-2.0",
+    "demoLabel": "Una vista de tu próximo espacio de trabajo",
+    "demoCaption": "Vista ilustrativa con datos de ejemplo. La interfaz puede cambiar durante la beta.",
+    "demoSessions": "SESIONES",
+    "demoProject": "mi-proyecto",
+    "demoDocs": "documentación",
+    "demoRemote": "studio · remoto",
+    "demoReady": "Cambios preparados. Contexto a mano.",
+    "demoHistory": "HISTORIAL DE COMANDOS",
+    "demoTime": "Hace 2 min",
+    "demoOutput": "Ver salida",
+    "demoSaved": "Sesiones con nombre. Historias independientes.",
+    "introLabel": "MENOS VOLVER A EMPEZAR",
+    "introTitle": "Abre tu trabajo.<br>No solo otra ventana.",
+    "introBody": "Cada proyecto tiene su ritmo. nia_ reúne terminal, historial y contexto para que puedas orientarte al volver. Nia Sync empieza a llevar ese estado a otros Macs mediante versiones cifradas.",
+    "focusTitle": "Tu espacio, a tu manera.",
+    "focusBody": "Sesiones con nombre y color, paneles divididos y varias ventanas. Cada shell conserva su propio historial.",
+    "memoryTitle": "Lo que pasó sigue ahí.",
+    "memoryBody": "Salida guardada en disco, historial de comandos y retorno al contexto de la sesión. Encuentra, copia e inserta sin volver a ejecutar.",
+    "aiTitle": "IA cuando la necesitas.",
+    "aiBody": "Pide un comando en lenguaje natural. Elige un modelo local o un proveedor externo y revisa la propuesta antes de usarla.",
+    "catalogLabel": "EXPLORA NIA_",
+    "catalogTitle": "Todo lo que forma parte de la idea.",
+    "catalogBody": "Funciones construidas, capacidades experimentales y próximos pasos, con su estado a la vista. Esta página describe la línea de desarrollo; una release anterior puede no incluir todas las novedades.",
+    "all": "Todas",
+    "beta": "En beta",
+    "experimental": "Experimental",
+    "development": "Nueva · desarrollo",
+    "planned": "En la hoja de ruta",
+    "details": "Detalles y alcance",
+    "resultSuffix": "funciones",
+    "empty": "No hay funciones en esta categoría.",
+    "continuityLabel": "DE UN MAC A OTRO",
+    "continuityTitle": "Seguir donde lo dejaste.<br><span>Ese es el destino.</span>",
+    "continuityBody": "Hay tres necesidades diferentes detrás de esa idea: reconectar a un proceso remoto, recuperar una copia y compartir versiones de sesiones. Nia Sync ya está implementado como beta.",
+    "remoteTitle": "Volver al mismo proceso",
+    "remoteState": "Hoy · experimental",
+    "remoteBody": "SSH + tmux permite conectarte desde otro Mac a una shell que sigue ejecutándose en el equipo remoto. Ese equipo debe permanecer disponible. El proceso no se mueve entre ordenadores.",
+    "handoffTitle": "Llevarte el estado guardado",
+    "handoffState": "Hoy · manual",
+    "handoffBody": "Las copias cifradas y el traspaso manual permiten recuperar metadatos e historial en otro Mac. Proyectos, rutas y entornos necesitan existir allí. No se transfieren procesos vivos.",
+    "syncTitle": "Continuar una sesión en otro Mac",
+    "syncState": "Nia Sync · beta",
+    "syncBody": "Conecta Google Drive directamente o elige una carpeta de iCloud Drive, conecta tus Macs con la misma clave y comparte sesiones seleccionadas. Historial cifrado incremental y versiones paralelas conservadas; continúa explícitamente desde el botón de nube.",
+    "roadmapLabel": "UNA BETA EN MOVIMIENTO",
+    "roadmapTitle": "Lo construido es el principio.",
+    "roadmapBody": "La dirección está clara. El orden puede cambiar con el uso real y las pruebas; estas prioridades no son fechas de entrega.",
+    "roadmapItems": [
+      [
+        "Consolidar el día a día",
+        "Afinar scroll, reflow, foco, aplicaciones a pantalla completa y restauración con varias ventanas. Medir rendimiento y ampliar las comprobaciones de accesibilidad."
+      ],
+      [
+        "Cerrar el círculo de recuperación",
+        "Configurar copias y restauraciones desde la app, programarlas y comprobar la recuperación en otro Mac. Mejorar retención y control de lo que se guarda."
+      ],
+      [
+        "Ampliar Nia Sync",
+        "Validar la entrega cloud en dos Macs físicos, añadir retención y borrados, compartir layouts y estudiar la transferencia de conversaciones de agentes. La base cifrada incremental ya está implementada."
+      ],
+      [
+        "Continuidad más completa",
+        "Explorar un servicio de sesiones persistentes, detectar automáticamente las conversaciones de agentes y mejorar la reconexión. Extender la integración de shell más allá de Zsh."
+      ]
+    ],
+    "faqTitle": "Antes de abrir la beta.",
+    "faqs": [
+      [
+        "¿Puedo sincronizar ya dos Macs automáticamente?",
+        "La beta incluye Nia Sync: versiones cifradas mediante Google Drive directo o una carpeta iCloud Drive, con sesiones elegidas por ti y revisión cada minuto mientras nia_ está abierta. Continuar en otro Mac es explícito. No mueve procesos, proyectos, ventanas ni los archivos internos de conversación de agentes; falta validación real con dos Macs."
+      ],
+      [
+        "¿Mis procesos sobreviven al cerrar nia_?",
+        "Las shells locales se recrean al abrir la app: se recupera el estado guardado, no la memoria del proceso. Una sesión remota tmux puede seguir viva en su host mientras ese host continúe funcionando."
+      ],
+      [
+        "¿Es obligatorio usar IA?",
+        "No. La asistencia es opcional. Puedes elegir ejecución local o un proveedor externo; este último recibe las consultas que le envíes. La propuesta de un modelo puede ser incorrecta y debe revisarse."
+      ],
+      [
+        "¿Dónde se guarda mi historial?",
+        "En tu Mac. Si activas Nia Sync, las sesiones seleccionadas se comparten cifradas en tu carpeta cloud. Las copias con restic también se cifran. El historial puede contener información sensible y todavía no hay una política completa de retención y redacción."
+      ],
+      [
+        "¿Qué necesito para probarla?",
+        "macOS 14 o posterior. Consulta las releases disponibles y sus requisitos. El acceso al repositorio y las descargas puede estar limitado durante esta fase; la línea de desarrollo puede ir por delante de la última release. La distribución aún no está notarizada por Apple."
+      ],
+      [
+        "¿Cómo puedo ayudar a que evolucione?",
+        "Comparte errores reproducibles, propuestas y experiencias de uso en GitHub cuando tengas acceso al repositorio. El código usa MPL-2.0; las dependencias y modelos tienen sus propias licencias."
+      ]
+    ],
+    "ctaLabel": "CONSTRUIDO PARA SEGUIR",
+    "ctaTitle": "Un terminal que va tomando forma.<br>Contigo al teclado.",
+    "ctaBody": "nia_ está en beta y seguirá evolucionando. Explora lo que hay, conoce lo que falta y acompaña el desarrollo.",
+    "ctaPrimary": "Versiones y acceso",
+    "ctaSecondary": "Código y documentación",
+    "footer": "Tu terminal. Tu memoria. Donde trabajes.",
+    "footerNote": "Nia Sync está en beta de desarrollo; no traslada procesos ni proyectos.",
+    "audit": "Estado técnico y pendientes",
+    "top": "Volver arriba"
+  },
+  "en": {
+    "lang": "en",
+    "otherLang": "es",
+    "otherLabel": "Español",
+    "otherPath": "../",
+    "title": "nia_ — Your terminal. Your memory.",
+    "description": "A native macOS terminal with persistent sessions, history, optional AI and a vision for continuity across Macs. Explore the nia_ beta and its roadmap.",
+    "skip": "Skip to content",
+    "navFeatures": "Features",
+    "navContinuity": "Across Macs",
+    "navRoadmap": "Roadmap",
+    "navBeta": "Explore the beta",
+    "eyebrow": "NATIVE TO MACOS · IN BETA",
+    "heroTitle": "Your terminal.<br><span>Your memory.</span>",
+    "heroBody": "A place for your projects, your shells and everything between one command and the next. Built for Mac, with a memory of what you were working on.",
+    "heroPrimary": "Discover nia_",
+    "heroSecondary": "View releases on GitHub",
+    "heroNote": "macOS 14+ · SwiftUI + Metal + Rust · MPL-2.0",
+    "demoLabel": "A look at your next workspace",
+    "demoCaption": "Illustrative view with sample data. The interface may change during the beta.",
+    "demoSessions": "SESSIONS",
+    "demoProject": "my-project",
+    "demoDocs": "documentation",
+    "demoRemote": "studio · remote",
+    "demoReady": "Changes ready. Context close by.",
+    "demoHistory": "COMMAND HISTORY",
+    "demoTime": "2 min ago",
+    "demoOutput": "View output",
+    "demoSaved": "Named sessions. Independent histories.",
+    "introLabel": "LESS STARTING OVER",
+    "introTitle": "Open your work.<br>Not just another window.",
+    "introBody": "Every project has its own rhythm. nia_ brings terminal, history and context together so you can find your bearings when you return. Nia Sync starts taking that state to other Macs through encrypted versions.",
+    "focusTitle": "A workspace of your own.",
+    "focusBody": "Named, color-coded sessions, split panes and multiple windows. Every shell keeps its own history.",
+    "memoryTitle": "What happened stays with you.",
+    "memoryBody": "Output saved to disk, a command timeline and restored session context. Find, copy and insert without running a command again.",
+    "aiTitle": "AI when you need it.",
+    "aiBody": "Ask for a command in natural language. Choose a local model or an external provider and review the suggestion before using it.",
+    "catalogLabel": "EXPLORE NIA_",
+    "catalogTitle": "Everything that belongs to the idea.",
+    "catalogBody": "Built features, experimental capabilities and next steps, with their status in view. This page describes the development line; an older release may not include every addition.",
+    "all": "All",
+    "beta": "In beta",
+    "experimental": "Experimental",
+    "development": "New · development",
+    "planned": "On the roadmap",
+    "details": "Details and scope",
+    "resultSuffix": "features",
+    "empty": "No features in this category.",
+    "continuityLabel": "FROM ONE MAC TO ANOTHER",
+    "continuityTitle": "Pick up where you left off.<br><span>That is the destination.</span>",
+    "continuityBody": "There are three different needs here: reconnecting to a remote process, recovering a backup and sharing session versions. Nia Sync is now implemented as a beta.",
+    "remoteTitle": "Return to the same process",
+    "remoteState": "Today · experimental",
+    "remoteBody": "SSH + tmux lets you connect from another Mac to a shell still running on the remote computer. That host must remain available. The process does not move between computers.",
+    "handoffTitle": "Take saved state with you",
+    "handoffState": "Today · manual",
+    "handoffBody": "Encrypted backups and manual handoff can restore metadata and history on another Mac. Projects, paths and environments need to exist there. Live processes are not transferred.",
+    "syncTitle": "Continue a session on another Mac",
+    "syncState": "Nia Sync · beta",
+    "syncBody": "Connect Google Drive directly or choose an iCloud Drive folder, connect your Macs with the same key and share selected sessions. Incremental encrypted history with parallel versions retained; continue explicitly from the cloud button.",
+    "roadmapLabel": "A BETA IN MOTION",
+    "roadmapTitle": "What is built is the beginning.",
+    "roadmapBody": "The direction is clear. Priorities may change with real-world use and testing; these are not delivery dates.",
+    "roadmapItems": [
+      [
+        "Strengthen everyday use",
+        "Refine scrolling, reflow, focus, fullscreen applications and multi-window restoration. Measure performance and expand accessibility checks."
+      ],
+      [
+        "Complete the recovery experience",
+        "Configure, schedule and restore backups from the app, and verify recovery on another Mac. Improve retention and control over what is recorded."
+      ],
+      [
+        "Extend Nia Sync",
+        "Validate cloud delivery on two physical Macs, add retention and deletions, share layouts and explore agent conversation transfer. The encrypted incremental foundation is implemented."
+      ],
+      [
+        "Extend continuity",
+        "Explore a persistent session service, automatically discover agent conversations and improve reconnection. Expand shell integration beyond Zsh."
+      ]
+    ],
+    "faqTitle": "Before you open the beta.",
+    "faqs": [
+      [
+        "Can I automatically sync two Macs today?",
+        "This beta includes Nia Sync: encrypted versions through direct Google Drive or an iCloud Drive folder, with sessions you select and a check every minute while nia_ is open. Continuing on another Mac is explicit. Processes, projects, layouts and internal agent conversation files are not transferred; real two-Mac validation remains pending."
+      ],
+      [
+        "Do my processes survive quitting nia_?",
+        "Local shells are recreated when the app opens: saved state returns, not process memory. A remote tmux session can remain alive on its host while that host continues to run."
+      ],
+      [
+        "Do I have to use AI?",
+        "No. Assistance is optional. Choose local inference or an external provider; an external provider receives the queries you send to it. A model's suggestion can be wrong and needs review."
+      ],
+      [
+        "Where is my history stored?",
+        "On your Mac. If you enable Nia Sync, selected sessions are shared encrypted in your cloud folder. Restic backups are encrypted too. History can contain sensitive information; a complete retention and redaction policy is still pending."
+      ],
+      [
+        "What do I need to try it?",
+        "macOS 14 or later. Check available releases and their requirements. Repository and download access may be limited during this phase; development may be ahead of the latest release. Distribution is not yet notarized by Apple."
+      ],
+      [
+        "How can I help it evolve?",
+        "Share reproducible bugs, proposals and experiences on GitHub when you have repository access. The code uses MPL-2.0; dependencies and models have their own licenses."
+      ]
+    ],
+    "ctaLabel": "BUILT TO CONTINUE",
+    "ctaTitle": "A terminal taking shape.<br>With you at the keyboard.",
+    "ctaBody": "nia_ is in beta and will keep evolving. Explore what is here, see what is missing and follow its development.",
+    "ctaPrimary": "Releases and access",
+    "ctaSecondary": "Code and documentation",
+    "footer": "Your terminal. Your memory. Everywhere.",
+    "footerNote": "Nia Sync is a beta; processes and projects are not transferred.",
+    "audit": "Technical status and remaining work",
+    "top": "Back to top"
+  },
+  "features": [
+    {
+      "id": "native",
+      "status": "beta",
+      "es": [
+        "Un terminal de verdad, para Mac",
+        "Interfaz SwiftUI y AppKit, renderizado Metal y un motor de terminal en Rust.",
+        "macOS 14+. Colores ANSI, capacidades de 256 colores y truecolor, Unicode y rejilla adaptable. Algunas TUIs, emoji y casos de reflow siguen pendientes de validación completa."
+      ],
+      "en": [
+        "A real terminal, built for Mac",
+        "SwiftUI and AppKit interface, Metal rendering and a Rust terminal core.",
+        "macOS 14+. ANSI colors, 256-color and truecolor capabilities, Unicode and an adaptive grid. Some TUIs, emoji and reflow cases still need full validation."
+      ]
+    },
+    {
+      "id": "sessions",
+      "status": "beta",
+      "es": [
+        "Sesiones con identidad",
+        "Nombres editables, colores, búsqueda, orden por arrastre e historial independiente.",
+        "Identificadores estables, sesiones guardadas y atajos ⌘1–⌘9. Renombrar no cambia el historial ni la identidad de la sesión."
+      ],
+      "en": [
+        "Sessions with an identity",
+        "Editable names, colors, search, drag ordering and independent history.",
+        "Stable identifiers, saved sessions and ⌘1–⌘9 shortcuts. Renaming does not change a session's identity or history."
+      ]
+    },
+    {
+      "id": "windows",
+      "status": "experimental",
+      "es": [
+        "Paneles y varias ventanas",
+        "Dos terminales lado a lado o apilados, y ventanas independientes con ⌘N.",
+        "Cada ventana recuerda su distribución. Dentro de un proceso, una sesión se edita en una sola ventana para evitar redimensionados incompatibles. La coordinación entre procesos independientes y la restauración de todas las ventanas siguen incompletas."
+      ],
+      "en": [
+        "Split panes and multiple windows",
+        "Two terminals side by side or stacked, plus independent windows with ⌘N.",
+        "Each window remembers its layout. Within one process, a session is edited in one window to avoid conflicting resizes. Coordination across independent processes and complete window restoration remain incomplete."
+      ]
+    },
+    {
+      "id": "restore",
+      "status": "beta",
+      "es": [
+        "Volver al contexto",
+        "Recupera sesiones, directorio, historial y un entorno Python que siga instalado.",
+        "La captura de directorio y venv se apoya en Zsh. Se recrea la shell; no se recuperan procesos locales terminados ni se instalan entornos que falten."
+      ],
+      "en": [
+        "Return to your context",
+        "Restore sessions, directory, history and a Python environment that is still installed.",
+        "Directory and venv capture uses Zsh hooks. The shell is recreated; terminated local processes are not restored and missing environments are not installed."
+      ]
+    },
+    {
+      "id": "history",
+      "status": "beta",
+      "es": [
+        "Memoria en disco",
+        "Salida ANSI persistente, scrollback configurable e índice de historial.",
+        "El scroll conserva colores y filas hasta el límite de 1.000–100.000 líneas configurado. La salida completa permanece en disco; el índice textual no reconstruye una TUI píxel a píxel. Los registros grandes pueden ralentizar la apertura."
+      ],
+      "en": [
+        "Memory on disk",
+        "Persistent ANSI output, configurable scrollback and an indexed history.",
+        "Scrolling preserves colors and rows up to the configured 1,000–100,000-line limit. Full output remains on disk; the text index cannot reconstruct a TUI pixel for pixel. Large logs can slow session opening."
+      ]
+    },
+    {
+      "id": "timeline",
+      "status": "beta",
+      "es": [
+        "Historial de comandos",
+        "Busca comandos, consulta duración y resultado, y vuelve a su salida.",
+        "En Zsh local: directorio, fecha, estado de salida y contador de repeticiones. Consulta los 200 comandos más recientes; copiar o insertar no ejecuta el comando. Los comandos antiguos sin marca no admiten salto a su salida."
+      ],
+      "en": [
+        "Command timeline",
+        "Search commands, inspect duration and exit status, and return to their output.",
+        "Local Zsh captures directory, time, exit status and repetition count. Browse the latest 200 commands; copying or inserting does not execute them. Older commands without anchors cannot jump to their output."
+      ]
+    },
+    {
+      "id": "input",
+      "status": "beta",
+      "es": [
+        "Pequeños gestos, menos fricción",
+        "Copia al seleccionar, selección de palabras, líneas o rectángulos y rutas desde Finder.",
+        "⌘C/⌘V, arrastrar archivos con rutas escapadas y doble Escape para limpiar la línea con bindings tipo Emacs. El aviso nativo de copia forma parte de la nueva línea de desarrollo."
+      ],
+      "en": [
+        "Small gestures, less friction",
+        "Copy on selection, word, line or rectangular selection, and paths from Finder.",
+        "⌘C/⌘V, dropped files with shell-escaped paths and double Escape to clear a line with Emacs-style bindings. The native copy confirmation belongs to the new development line."
+      ]
+    },
+    {
+      "id": "links",
+      "status": "beta",
+      "es": [
+        "Enlaces e inserciones rápidas",
+        "Abre URLs con ⌘clic e inserta identificadores o contraseñas desde el menú contextual.",
+        "Enlaces HTTP/HTTPS, copiar enlace y generadores de UUID, contraseña e identificadores heredados. Insertar texto no envía Intro. Algunos enlaces partidos entre líneas aún no se reconocen."
+      ],
+      "en": [
+        "Links and quick insert",
+        "Open URLs with ⌘click and insert identifiers or passwords from the context menu.",
+        "HTTP/HTTPS links, copy link, UUID and password generators, plus legacy identifiers. Inserting text never sends Return. Some wrapped links are not recognized yet."
+      ]
+    },
+    {
+      "id": "exit",
+      "status": "beta",
+      "es": [
+        "Un cierre con intención",
+        "Confirmación opcional antes de cerrar una sesión con exit o logout.",
+        "Intercepta esas órdenes exactas en el prompt Zsh local. Cancelar mantiene la shell abierta y confirmar conserva su historial. No cubre otras shells, SSH o salidas internas de programas."
+      ],
+      "en": [
+        "Close a session deliberately",
+        "Optional confirmation before closing a session with exit or logout.",
+        "Intercepts those exact commands at the local Zsh prompt. Cancel keeps the shell running; confirming preserves its history. It does not cover other shells, SSH or internal program exit commands."
+      ]
+    },
+    {
+      "id": "appearance",
+      "status": "beta",
+      "es": [
+        "Una app que encaja contigo",
+        "Tema claro, oscuro o del sistema; tamaño de letra y cursor configurables.",
+        "Interfaz y preferencias en español e inglés. Opacidad del terminal disponible de forma experimental. Los cambios de apariencia no alteran tus sesiones."
+      ],
+      "en": [
+        "An app that fits you",
+        "Light, dark or system appearance, with configurable font size and cursor.",
+        "Interface and settings in English and Spanish. Terminal opacity is experimental. Appearance changes do not alter sessions."
+      ]
+    },
+    {
+      "id": "ai",
+      "status": "beta",
+      "es": [
+        "Del lenguaje natural al comando",
+        "Escribe ? en Zsh local y recibe una propuesta editable para tu terminal.",
+        "Puedes insertar tras revisar. La ejecución automática es opcional y está limitada por un validador de patrones; no es un sandbox. La integración de ? no está disponible en Bash, Fish o SSH remoto."
+      ],
+      "en": [
+        "From natural language to a command",
+        "Type ? in local Zsh to receive an editable command suggestion.",
+        "Review and insert it. Optional automatic execution is restricted by a pattern validator, not a sandbox. The ? integration is not available in Bash, Fish or remote SSH."
+      ]
+    },
+    {
+      "id": "models",
+      "status": "beta",
+      "es": [
+        "Elige dónde piensa la IA",
+        "Modelo interno opcional, servidores locales y proveedores externos.",
+        "GGUF con llama.cpp bajo demanda; endpoints compatibles como Ollama, vLLM o LM Studio; OpenAI, Anthropic, Gemini y OpenRouter. Claves de proveedores en el llavero. El modelo interno requiere una descarga adicional."
+      ],
+      "en": [
+        "Choose where AI runs",
+        "Optional internal model, local servers and external providers.",
+        "On-demand GGUF with llama.cpp; compatible endpoints such as Ollama, vLLM or LM Studio; OpenAI, Anthropic, Gemini and OpenRouter. Provider keys use Keychain. The internal model requires an additional download."
+      ]
+    },
+    {
+      "id": "agents",
+      "status": "experimental",
+      "es": [
+        "Retomar conversaciones de agentes",
+        "Recuerda órdenes explícitas de resume de Claude, Codex y Gemini.",
+        "Necesita el ID en el comando original, la CLI y los datos de conversación en el Mac. Descubrir automáticamente el ID de una conversación iniciada sin resume sigue pendiente."
+      ],
+      "en": [
+        "Resume agent conversations",
+        "Remember explicit resume commands for Claude, Codex and Gemini.",
+        "Requires an ID in the original command, the CLI and conversation data on the Mac. Automatic discovery of IDs from conversations started without resume is still pending."
+      ]
+    },
+    {
+      "id": "remote",
+      "status": "experimental",
+      "es": [
+        "Nia Remote",
+        "SSH + tmux para volver a una shell que vive en otro equipo.",
+        "Utiliza tu configuración SSH y verifica la identidad del host. La sesión tmux se conserva en el servidor mientras siga activo. Incluye reconexión manual; no sincroniza el workspace."
+      ],
+      "en": [
+        "Nia Remote",
+        "SSH + tmux to return to a shell living on another computer.",
+        "Uses your SSH configuration and verifies the host identity. The tmux session remains on the host while it stays running. Includes manual reconnection; it does not synchronize the workspace."
+      ]
+    },
+    {
+      "id": "backup",
+      "status": "experimental",
+      "es": [
+        "Copias cifradas y traspaso",
+        "Snapshots con restic y recuperación manual de estado e historial.",
+        "Herramientas nia-backup y nia-handoff para repositorios locales, SFTP o S3. La configuración y ejecución desde la interfaz nativa, la programación y el flujo de restauración guiado están pendientes."
+      ],
+      "en": [
+        "Encrypted backups and handoff",
+        "Restic snapshots and manual recovery of state and history.",
+        "nia-backup and nia-handoff tools support local, SFTP or S3 repositories. Native UI configuration and execution, scheduling and guided restoration remain pending."
+      ]
+    },
+    {
+      "id": "fonts",
+      "status": "beta",
+      "es": [
+        "Cinco fuentes para programar",
+        "JetBrains Mono, Fira Code, Cascadia Code, IBM Plex Mono y Source Code Pro.",
+        "Descargas opcionales con licencia, verificadas y registradas solo para nia_. Selección sin reiniciar. El renderer por celdas no activa ligaduras entre caracteres. Implementado en la beta."
+      ],
+      "en": [
+        "Five fonts for coding",
+        "JetBrains Mono, Fira Code, Cascadia Code, IBM Plex Mono and Source Code Pro.",
+        "Optional licensed, verified downloads registered only for nia_. Select without restarting. The cell renderer does not enable multi-character ligatures. Implemented in the development build."
+      ]
+    },
+    {
+      "id": "usage",
+      "status": "beta",
+      "es": [
+        "Cuotas de Claude y Codex a la vista",
+        "Barra opcional con consumo semanal, reinicios y tokens con su ámbito indicado.",
+        "Codex consulta su CLI local. Claude necesita conectar el adaptador de su línea de estado y emitir una respuesta. Los datos dependen del plan; una cuota ausente no se muestra como cero. Implementado en desarrollo."
+      ],
+      "en": [
+        "Claude and Codex quotas in view",
+        "An optional bar with weekly usage, resets and token counts labeled by scope.",
+        "Codex reads its local CLI. Claude needs its status-line adapter connected and a response emitted. Data depends on the plan; unavailable quota is not displayed as zero. Implemented in development."
+      ]
+    },
+    {
+      "id": "updates",
+      "status": "beta",
+      "es": [
+        "Actualizaciones desde GitHub",
+        "Comprobación de versiones, canal estable o preliminar y descarga e instalación confirmadas.",
+        "Comprueba integridad y compatibilidad antes de sustituir la app. Usa la sesión de gh si el repositorio necesita acceso privado. La distribución sigue en beta, sin notarización Apple."
+      ],
+      "en": [
+        "Updates from GitHub",
+        "Version checks, stable or prerelease channels, and confirmed download and installation.",
+        "Checks integrity and compatibility before replacing the app. Uses the gh session if the repository needs private access. Distribution remains in beta, without Apple notarization."
+      ]
+    },
+    {
+      "id": "actions",
+      "status": "planned",
+      "es": [
+        "Tus acciones habituales",
+        "Llevar los comandos configurables del prototipo a la interfaz nativa.",
+        "Existe un formato actions.toml y código histórico. Falta conectarlo a SwiftUI con selección de sesión y confirmación. No está disponible actualmente como una función de la app nativa."
+      ],
+      "en": [
+        "Your everyday actions",
+        "Bring the prototype's configurable commands to the native interface.",
+        "An actions.toml format and historical code exist. Native SwiftUI integration, session targeting and confirmation remain pending. It is not currently available as a native app feature."
+      ]
+    },
+    {
+      "id": "sync",
+      "status": "beta",
+      "es": [
+        "Nia Sync",
+        "Versiones de tus sesiones entre Macs mediante iCloud Drive o Google Drive.",
+        "Beta: Google Drive directo con autorización en el navegador o carpeta iCloud, claves en Keychain, selección explícita, bloques cifrados incrementales, versiones concurrentes y botón para continuar. No sobrescribe sesiones abiertas. Procesos, proyectos, conversaciones internas de agentes, layouts y borrados quedan fuera. Pendiente prueba física en dos Macs."
+      ],
+      "en": [
+        "Nia Sync",
+        "Session versions across Macs through iCloud Drive or Google Drive.",
+        "Beta: direct Google Drive with browser authorization or an iCloud folder, Keychain keys, explicit selection, incremental encrypted blocks, concurrent versions and a continue button. Open sessions are preserved. Processes, projects, internal agent conversations, layouts and deletions are excluded. Physical two-Mac validation is pending."
+      ]
+    },
+    {
+      "id": "persistent",
+      "status": "planned",
+      "es": [
+        "Sesiones locales más persistentes",
+        "Separar la vida de los procesos de la ventana del terminal.",
+        "Requiere un servicio residente de PTY y un protocolo de reconexión. No está implementado. No promete migrar la memoria de un proceso ni recuperarlo después de reiniciar el equipo."
+      ],
+      "en": [
+        "More persistent local sessions",
+        "Separate process lifetime from the terminal window.",
+        "Requires a resident PTY service and reconnection protocol. Not implemented. It does not promise to migrate process memory or restore it after rebooting the host."
+      ]
+    },
+    {
+      "id": "polish",
+      "status": "planned",
+      "es": [
+        "Más control y compatibilidad",
+        "Backup desde la app, políticas de historial y mayor cobertura de shells y accesibilidad.",
+        "También quedan la detección automática de agentes, pruebas de recuperación entre Macs, coordinación entre procesos, notarización y validación más amplia del terminal. Sin fechas comprometidas."
+      ],
+      "en": [
+        "More control and compatibility",
+        "In-app backup, history policies, broader shell support and accessibility.",
+        "Also pending: automatic agent discovery, cross-Mac recovery tests, cross-process coordination, notarization and broader terminal validation. No committed delivery dates."
+      ]
+    }
+  ]
+}

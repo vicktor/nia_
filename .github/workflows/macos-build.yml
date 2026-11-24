@@ -1,0 +1,75 @@
+name: macOS native build
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nia-macos-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build nia_ on macOS
+    runs-on: macos-15
+    timeout-minutes: 60
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Check build tools
+        run: |
+          xcodebuild -version
+          swiftc --version
+          cmake --version
+          cargo --version
+
+      - name: Cache Cargo dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Test Rust targets
+        run: cargo test --locked --all-targets
+
+      - name: Test Python checks and website
+        run: |
+          python3 -m unittest discover -s tests -v
+          python3 scripts/build-website.py
+          python3 scripts/check-website.py
+          git diff --exit-code -- docs
+
+      - name: Test encrypted session synchronization
+        run: |
+          swiftc native/Sources/NiaSyncEngine.swift native/Tests/NiaSyncTests.swift -o /tmp/nia-sync-tests
+          /tmp/nia-sync-tests
+          swiftc native/Sources/NiaSyncEngine.swift native/Sources/NiaGoogleOAuth.swift native/Sources/NiaGoogleDrive.swift native/Tests/NiaGoogleDriveTests.swift -o /tmp/nia-drive-tests
+          /tmp/nia-drive-tests
+
+      - name: Build native macOS app (SwiftUI + Metal + Rust)
+        run: bash ./scripts/build-native-macos.sh
+
+      - name: Validate application bundle
+        run: |
+          test -x dist/nia_.app/Contents/MacOS/nia
+          test -x dist/nia_.app/Contents/MacOS/nia-backup
+          test -x dist/nia_.app/Contents/MacOS/nia-llama-server
+          plutil -lint dist/nia_.app/Contents/Info.plist
+          codesign --verify --deep --strict dist/nia_.app
+
+      - name: Archive application preserving bundle permissions
+        run: ditto -c -k --sequesterRsrc --keepParent dist/nia_.app dist/nia_-macos-ci.zip
+
+      - name: Upload application for testing
+        uses: actions/upload-artifact@v4
+        with:
+          name: nia_-macos-ci
+          path: dist/nia_-macos-ci.zip
+          retention-days: 7
