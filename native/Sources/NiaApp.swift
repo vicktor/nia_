@@ -615,6 +615,7 @@ private struct NiaWindowRoot: View {
             .environment(\.locale, language == "system" ? Locale.autoupdatingCurrent : Locale(identifier: language))
             .focusedSceneValue(\.niaWindowModel, model)
             .frame(minWidth: 720, minHeight: 420)
+            .background(NiaWindowPlacementView(windowID: windowID))
             .onAppear {
                 model.configureWindow(windowID)
                 NiaUpdater.shared.start(beforeInstall: NiaSharedCore.prepareForUpdate)

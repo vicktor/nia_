@@ -46,6 +46,11 @@ jobs:
           python3 scripts/check-website.py
           git diff --exit-code -- docs
 
+      - name: Test window placement restoration
+        run: |
+          swiftc native/Sources/NiaWindowPlacement.swift native/Tests/NiaWindowPlacementTests.swift -o /tmp/nia-window-placement-tests
+          /tmp/nia-window-placement-tests
+
       - name: Test encrypted session synchronization
         run: |
           swiftc native/Sources/NiaSyncEngine.swift native/Tests/NiaSyncTests.swift -o /tmp/nia-sync-tests

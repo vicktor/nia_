@@ -25,6 +25,7 @@ nia_ is an **experimental native terminal for macOS** combining SwiftUI/AppKit c
 
 - **⌘N** (File → New Window) opens an independent native nia_ window.
 - Each window has its own ordered tabs, split, focused pane and remembered layout.
+- Moving or resizing a window saves its position and size locally. Reopening restores its saved frame; if macOS creates a new scene, it uses the last saved frame. Frames are fitted to the available display when a monitor is disconnected. Full-screen transitions preserve the normal window frame.
 - All windows in the same application process share one Rust PTY manager; closing a tab does not delete shell history.
 - Open an existing session using the folder-plus button in the sidebar.
 - One session can be edited in only one window at a time to avoid conflicting PTY resizes.

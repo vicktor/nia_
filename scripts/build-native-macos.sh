@@ -70,14 +70,21 @@ swiftc -O -parse-as-library \
     native/Sources/NiaApp.swift native/Sources/NiaScreenDecoder.swift native/Sources/NiaTerminalGeometry.swift native/Sources/NiaTerminalCursor.swift native/Sources/NiaTerminalView.swift native/Sources/NiaAI.swift native/Sources/NiaAIExecutionPolicy.swift native/Sources/NiaInternalAI.swift \
     native/Sources/NiaUpdateModels.swift native/Sources/NiaUpdateInstallation.swift native/Sources/NiaUpdateService.swift native/Sources/NiaUpdater.swift \
     native/Sources/NiaGitHubCLI.swift \
+    native/Sources/NiaWindowPlacement.swift \
     native/Sources/NiaFonts.swift \
     native/Sources/NiaSyncEngine.swift native/Sources/NiaSync.swift \
     native/Sources/NiaGoogleOAuth.swift native/Sources/NiaGoogleDrive.swift native/Sources/NiaGoogleDriveView.swift \
     native/Sources/NiaUsageModels.swift native/Sources/NiaCodexUsage.swift native/Sources/NiaUsageView.swift \
-    -L target/release -lnia_core \
+    -L "$APP/Contents/Frameworks" -lnia_core \
     -Xlinker -rpath -Xlinker '@executable_path/../Frameworks' \
     -framework AppKit -framework SwiftUI -framework Metal -framework MetalKit -framework CoreText \
     -o "$APP/Contents/MacOS/nia"
+# Link against the bundled copy whose install name was normalized above, not
+# Cargo's dylib (which may carry an absolute path into the build directory).
+if ! otool -L "$APP/Contents/MacOS/nia" | grep -Fq '@rpath/libnia_core.dylib'; then
+    echo "ERROR: nia no enlaza con el motor Rust incluido en el bundle" >&2
+    exit 1
+fi
 swiftc -O -parse-as-library -target "$(uname -m)-apple-macosx14.0" \
     native/Sources/NiaUpdateModels.swift native/Sources/NiaUpdateInstallation.swift native/Updater/NiaUpdateInstaller.swift \
     -framework AppKit -o "$APP/Contents/MacOS/nia-update-installer"
@@ -102,7 +109,7 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
   <key>CFBundleExecutable</key><string>nia</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleIconFile</key><string>nia_.icns</string>
-  <key>CFBundleShortVersionString</key><string>0.8.1</string>
+  <key>CFBundleShortVersionString</key><string>0.8.2</string>
   <key>CFBundleVersion</key><string>1</string>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>NSHighResolutionCapable</key><true/>

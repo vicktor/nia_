@@ -25,6 +25,7 @@ nia_ es un **terminal experimental nativo para macOS** que combina una interfaz 
 
 - **⌘N** (Archivo → Nueva ventana) abre otra ventana nativa de nia_.
 - Cada ventana tiene pestañas ordenadas, split, foco y distribución independientes.
+- Al mover o redimensionar una ventana se guardan su posición y tamaño en este Mac. Al abrirla se recuperan esos datos; si macOS crea una escena nueva, se usa la última posición guardada. Si se desconecta un monitor, la ventana se ajusta a una pantalla disponible. Entrar o salir de pantalla completa conserva las dimensiones de la ventana normal.
 - Todas las ventanas del mismo proceso de la aplicación comparten un único motor Rust/PTY; cerrar una pestaña no elimina su historial.
 - Usa el botón de carpeta con «+» para recuperar sesiones guardadas.
 - Una sesión solo se puede editar en una ventana a la vez para evitar conflictos de tamaño PTY.
