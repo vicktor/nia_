@@ -5,6 +5,7 @@ use std::{fs::{self, File}, io::{Read, Seek, SeekFrom}, num::NonZeroU16, path::{
 #[cfg(test)]
 use std::io::Write;
 use crate::{storage::{SessionRecord, Store}, history::HistoryIndexer, pty_input::PtyInput};
+use crate::session_resume::validated_resume;
 
 /// Encode wheel events only for a program that owns mouse handling or the
 /// alternate screen. Normal shell scrollback never receives synthetic input.
@@ -53,7 +54,7 @@ pub struct LiveTerminal {
     marks_offset: u64,
     marks_buffer: Vec<u8>,
     pending_mark: Option<(f64, String, String)>,
-    agent_resume_path: Option<PathBuf>,
+    session_resume_path: Option<PathBuf>,
     pub _child: Box<dyn portable_pty::Child + Send + Sync>,
 }
 
@@ -210,21 +211,31 @@ impl LiveTerminal {
             }
             Some(file)
         } else { None };
-        let agent_resume_path = if ai_request_path.is_some() {
+        let session_resume_path = if ai_request_path.is_some() {
+            // Keep the existing filename so previously saved agent IDs survive.
             Some(session_base(&record.id)?.join("agent-resume"))
         } else { None };
-        let saved_agent = agent_resume_path.as_ref().and_then(|path|
-            fs::read_to_string(path).ok()).and_then(|line| validated_agent_resume(line.trim()));
         let mut terminal = Self { state_path, ai_request_path, exit_request_path, exit_approval_path, exit_observed_polls: 0,
-            marks_file, marks_offset: 0, marks_buffer: Vec::new(), pending_mark: None, agent_resume_path,
+            marks_file, marks_offset: 0, marks_buffer: Vec::new(), pending_mark: None, session_resume_path,
             history_indexer: HistoryIndexer::default(), parser: vt100::Parser::new(NonZeroU16::new(rows).unwrap(), NonZeroU16::new(cols).unwrap(), scrollback_lines), history_view: None,
             input, master: pair.master, rx, remote: remote_host.is_some(), _child: child };
-        // Only a previously observed explicit resume command is replayed.
-        // Never replay arbitrary shell history or unvalidated input.
-        if let Some(command) = saved_agent {
-            terminal.send(format!("{command}\r").as_bytes())?;
-        }
+        terminal.restore_session_command()?;
         Ok(terminal)
+    }
+
+    fn restore_session_command(&mut self) -> Result<()> {
+        // Revalidate on every launch. Only local Zsh has this per-session file;
+        // dedicated SSH/tmux tabs already reconnect through their own path.
+        let saved = self
+            .session_resume_path
+            .as_ref()
+            .filter(|path| fs::metadata(path).is_ok_and(|metadata| metadata.len() <= 8192))
+            .and_then(|path| fs::read_to_string(path).ok())
+            .and_then(|line| validated_resume(&line));
+        if let Some(command) = saved {
+            self.send(format!("{command}\r").as_bytes())?;
+        }
+        Ok(())
     }
 
     /// Read only new appended metadata, capped to 64 KiB per poll. Hooks use
@@ -268,10 +279,10 @@ impl LiveTerminal {
             if kind == b'S' {
                 if let Ok(started) = fields[0].parse::<f64>() {
                     if started.is_finite() && fields[1].len() <= 4096 && fields[2].len() <= 8192 {
-                        // Remember the explicit resume command while the CLI is
+                        // Remember an eligible agent/SSH invocation while it is
                         // still running, not only once it returns to the prompt.
-                        if let Some(path) = &self.agent_resume_path {
-                            if let Some(command) = validated_agent_resume(&fields[2]) {
+                        if let Some(path) = &self.session_resume_path {
+                            if let Some(command) = validated_resume(&fields[2]) {
                                 let temp = path.with_extension("tmp");
                                 fs::write(&temp, command)?;
                                 #[cfg(unix)] {
@@ -287,8 +298,8 @@ impl LiveTerminal {
                     }
                 }
             } else if let Some((start, cwd, command)) = self.pending_mark.take() {
-                // Once the agent has exited, restarting it would be wrong.
-                if let Some(path) = &self.agent_resume_path {
+                // An exited agent or SSH connection must not reconnect later.
+                if let Some(path) = &self.session_resume_path {
                     let _ = fs::remove_file(path);
                 }
                 if let (Ok(end), Ok(status)) = (fields[0].parse::<f64>(), fields[1].parse::<i64>()) {
@@ -423,7 +434,7 @@ impl LiveTerminal {
             marks_offset: 0,
             marks_buffer: Vec::new(),
             pending_mark: None,
-            agent_resume_path: None,
+            session_resume_path: None,
             _child: child,
         })
     }
@@ -439,23 +450,6 @@ impl Drop for LiveTerminal {
             let _ = self._child.kill();
         }
     }
-}
-
-/// Fail-closed recognition of commands the user explicitly ran to resume
-/// a known agent conversation. An arbitrary command is NEVER re-executed.
-fn validated_agent_resume(source: &str) -> Option<String> {
-    let parts: Vec<&str> = source.split_ascii_whitespace().collect();
-    let (provider, id) = match parts.as_slice() {
-        ["claude", "--resume", id] => ("claude --resume", *id),
-        ["codex", "resume", id] => ("codex resume", *id),
-        ["gemini", "--resume", id] => ("gemini --resume", *id),
-        _ => return None,
-    };
-    if !(8..=128).contains(&id.len()) ||
-        !id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_') {
-        return None;
-    }
-    Some(format!("{provider} {id}"))
 }
 
 // Stable and filesystem-safe per-session directory. Session IDs can contain unicode.
@@ -1102,7 +1096,7 @@ mod history_tests {
             marks_offset: 0,
             marks_buffer: Vec::new(),
             pending_mark: None,
-            agent_resume_path: None,
+            session_resume_path: None,
             _child: child,
         };
         for (rows, cols) in [(80, 160), (24, 72), (50, 120)] {
@@ -1124,15 +1118,178 @@ mod history_tests {
     fn tmux_name_is_shell_safe_and_deterministic() {
         assert_eq!(remote_tmux_name("a'b"), "nia-612762");
     }
-    #[test]
-    fn agent_resume_accepts_explicit_safe_ids_only() {
-        let id = "123e4567-e89b-12d3-a456-426614174000";
-        assert_eq!(validated_agent_resume(&format!("claude --resume {id}")),
-                   Some(format!("claude --resume {id}")));
-        assert!(validated_agent_resume("claude --resume x; rm -rf ~").is_none());
-        assert!(validated_agent_resume("sudo claude --resume 123e4567").is_none());
-        assert!(validated_agent_resume("claude --continue").is_none());
+
+    fn resume_test_terminal(base: &Path) -> LiveTerminal {
+        fs::create_dir_all(base).unwrap();
+        let mut terminal = LiveTerminal::for_history_tests(10, 100).unwrap();
+        terminal.marks_file = Some(
+            fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .open(base.join("command-marks"))
+                .unwrap(),
+        );
+        terminal.session_resume_path = Some(base.join("agent-resume"));
+        terminal
     }
+
+    fn append_test_marks(base: &Path, marks: &[u8]) {
+        fs::OpenOptions::new()
+            .append(true)
+            .open(base.join("command-marks"))
+            .unwrap()
+            .write_all(marks)
+            .unwrap();
+    }
+
+    fn assert_replayed_to_pty(terminal: &mut LiveTerminal, expected: &str) {
+        let mut reader = terminal
+            .input
+            .reader(terminal.master.try_clone_reader().unwrap());
+        let (sender, receiver) = mpsc::channel();
+        let expected_bytes = expected.as_bytes().to_vec();
+        let reader_thread = thread::spawn(move || {
+            let mut bytes = Vec::new();
+            let mut chunk = [0; 4096];
+            while let Ok(count) = reader.read(&mut chunk) {
+                if count == 0 {
+                    break;
+                }
+                bytes.extend_from_slice(&chunk[..count]);
+                if bytes
+                    .windows(expected_bytes.len())
+                    .any(|part| part == expected_bytes)
+                {
+                    break;
+                }
+                if bytes.len() > 16384 {
+                    break;
+                }
+            }
+            let _ = sender.send(bytes);
+        });
+        terminal.restore_session_command().unwrap();
+        let result = receiver.recv_timeout(std::time::Duration::from_secs(3));
+        // Always end the test child, including a failed replay, so no reader leaks.
+        terminal._child.kill().unwrap();
+        terminal._child.wait().unwrap();
+        reader_thread.join().unwrap();
+        let bytes = result.expect("saved command did not reach the PTY");
+        assert!(
+            String::from_utf8_lossy(&bytes).contains(expected),
+            "replayed bytes: {bytes:?}"
+        );
+    }
+
+    #[test]
+    fn two_interrupted_sessions_restore_ssh_and_gemini_independently() {
+        let temp = tempfile::tempdir().unwrap();
+        let left = temp.path().join("left");
+        let right = temp.path().join("right");
+        let mut ssh = resume_test_terminal(&left);
+        let mut gemini = resume_test_terminal(&right);
+        // Exercise the real Zsh preexec hook, while the command is still active.
+        for (base, source) in [
+            (&left, "ssh -p 2222 -J gateway user@server"),
+            (&right, "gemini -r 123e4567-e89b-12d3-a456-426614174000"),
+        ] {
+            let user = base.join("user");
+            fs::create_dir_all(&user).unwrap();
+            write_zsh_startup(base, Some(&user)).unwrap();
+            let Some(mut shell) = isolated_zsh(base, &user) else {
+                return;
+            };
+            shell.env("NIA_TEST_RESUME_COMMAND", source);
+            assert_zsh_success(shell, "_nia_mark_start \"$NIA_TEST_RESUME_COMMAND\"");
+        }
+        assert!(ssh.take_command_marks().unwrap().is_empty());
+        assert!(gemini.take_command_marks().unwrap().is_empty());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                fs::metadata(left.join("agent-resume"))
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o600
+            );
+        }
+        drop(ssh);
+        drop(gemini);
+        // Recreate both PTYs and metadata readers, as a fresh app launch does.
+        let mut ssh = resume_test_terminal(&left);
+        let mut gemini = resume_test_terminal(&right);
+        assert_replayed_to_pty(&mut ssh, "ssh -p 2222 -J gateway user@server\r\n");
+        assert_replayed_to_pty(
+            &mut gemini,
+            "gemini --resume 123e4567-e89b-12d3-a456-426614174000\r\n",
+        );
+    }
+
+    #[test]
+    fn completed_ssh_and_other_commands_clear_resume() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut terminal = resume_test_terminal(temp.path());
+        let saved = temp.path().join("agent-resume");
+        for (source, expected) in [
+            ("ssh host", "ssh host"),
+            ("claude --resume 12345678", "claude --resume 12345678"),
+            ("codex resume 12345678", "codex resume 12345678"),
+            ("gemini -r abc12345", "gemini --resume abc12345"),
+        ] {
+            append_test_marks(
+                temp.path(),
+                format!("S\0{}\0/tmp\0{source}\0", 10).as_bytes(),
+            );
+            assert!(terminal.take_command_marks().unwrap().is_empty());
+            assert_eq!(fs::read_to_string(&saved).unwrap(), expected);
+            append_test_marks(temp.path(), b"E\x0011\x00255\x00");
+            assert_eq!(terminal.take_command_marks().unwrap().len(), 1);
+            assert!(!saved.exists(), "exited/failed commands must not restart");
+        }
+        append_test_marks(temp.path(), b"S\x0012\0/tmp\0ssh host\0");
+        terminal.take_command_marks().unwrap();
+        assert!(saved.exists());
+        append_test_marks(temp.path(), b"S\x0013\0/tmp\0echo finished\0");
+        terminal.take_command_marks().unwrap();
+        assert!(
+            !saved.exists(),
+            "another command supersedes the active SSH candidate"
+        );
+    }
+
+    #[test]
+    fn saved_resume_is_revalidated_before_sending_to_terminal() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut terminal = resume_test_terminal(temp.path());
+        let mut reader = terminal
+            .input
+            .reader(terminal.master.try_clone_reader().unwrap());
+        let (sender, receiver) = mpsc::channel();
+        let reader_thread = thread::spawn(move || {
+            let mut bytes = [0; 1024];
+            let count = reader.read(&mut bytes).unwrap_or(0);
+            let _ = sender.send(count);
+        });
+        for source in [
+            "ssh host; echo unexpected",
+            "gemini --resume 1",
+            "ssh host reboot",
+        ] {
+            fs::write(temp.path().join("agent-resume"), source).unwrap();
+            terminal.restore_session_command().unwrap();
+        }
+        let result = receiver.recv_timeout(std::time::Duration::from_millis(100));
+        terminal._child.kill().unwrap();
+        terminal._child.wait().unwrap();
+        reader_thread.join().unwrap();
+        assert!(matches!(result, Err(mpsc::RecvTimeoutError::Timeout)));
+    }
+
     #[test]
     fn ids_have_distinct_history_paths() {
         let a = session_base("alpha").unwrap();

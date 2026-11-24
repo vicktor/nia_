@@ -3,6 +3,7 @@
 mod storage;
 mod history;
 mod terminal;
+mod session_resume;
 mod persistence;
 mod pty_input;
 mod update_archive;
