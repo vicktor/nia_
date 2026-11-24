@@ -198,8 +198,15 @@ struct NiaUpdateView: View {
                     if candidate.release.prerelease { Text("Preliminar").font(.caption).foregroundStyle(.secondary) }
                 }
                 if let notes = candidate.release.body, !notes.isEmpty {
-                    ScrollView { Text(verbatim: notes).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }
-                        .frame(maxHeight: 180)
+                    ScrollView {
+                        Text(verbatim: notes)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    // A maximum alone lets the hosting window collapse this
+                    // viewport to one line. Reserve room for at least ten.
+                    .frame(height: 240)
                 }
             }
             if let error = updater.errorMessage {
@@ -228,7 +235,7 @@ struct NiaUpdateView: View {
                 }
             }
         }
-        .padding(24).frame(width: 540)
+        .padding(24).frame(width: 680)
         .environment(\.locale, language == "system" ? Locale.autoupdatingCurrent : Locale(identifier: language))
         .alert("¿Instalar y reiniciar nia_?", isPresented: $confirmInstall) {
             Button("Cancelar", role: .cancel) { }

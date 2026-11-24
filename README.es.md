@@ -37,6 +37,7 @@ La coordinación de espacios de trabajo es por proceso: abrir procesos separados
 
 ## Actualizaciones, fuentes y consumo de IA
 
+- La ventana de actualización es más ancha y reserva espacio para ver al menos diez líneas de novedades, con desplazamiento para las descripciones más largas.
 - **nia_ → Buscar actualizaciones…** consulta las releases de `vicktor/nia_`. En **Preferencias → Actualizaciones** puedes activar la búsqueda diaria y elegir **Estables y preliminares** (predeterminado) o **Solo estables**. Nunca ofrece una versión anterior a la instalada.
 - Primero consulta GitHub sin autenticación. Mientras el repositorio sea privado, nia_ puede usar la sesión existente de GitHub CLI (`gh`) para consultar y descargar releases. Esta alternativa se puede desactivar y nunca copia el token a nia_. Cuando el repositorio sea público, las actualizaciones funcionarán sin `gh` automáticamente.
 - Primero se descarga el ZIP de tu arquitectura y se verifican su SHA-256, el identificador, la versión, la compatibilidad con macOS y la firma del bundle. **Instalar y reiniciar…** pide confirmación: termina los trabajos locales antes de aceptarla. Guarda historiales y distribuciones, espera a que cierre esta instancia con todas sus ventanas y sustituye la app. Conserva la versión anterior hasta el arranque de la nueva y la recupera si Launch Services rechaza la apertura. No cierra otras instancias por la fuerza. Si la carpeta no permite escritura, ofrece el enlace a la instalación manual. Las releases actuales tienen firma ad hoc; esto no añade notarización de Apple.
