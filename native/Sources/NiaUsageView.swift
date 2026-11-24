@@ -65,10 +65,25 @@ struct NiaUsageToolbar: ToolbarContent {
     @AppStorage("nia.usage.claude") private var showClaude = true
     @ObservedObject private var monitor = NiaUsageMonitor.shared
     var body: some ToolbarContent {
-        ToolbarItemGroup(placement: .automatic) {
-            if enabled {
+        if enabled && (showCodex || showClaude) {
+            if #available(macOS 26.0, *) {
+                usageItem.sharedBackgroundVisibility(.hidden)
+            } else {
+                usageItem
+            }
+        }
+    }
+
+    private var usageItem: some ToolbarContent {
+        ToolbarItem(placement: .automatic) {
+            HStack(spacing: 0) {
                 if showCodex { NiaProviderUsage(name: "Codex", snapshot: monitor.codex, error: monitor.codexError) }
                 if showClaude { NiaProviderUsage(name: "Claude", snapshot: monitor.claude, error: monitor.claudeError) }
+                Divider()
+                    .frame(height: 24)
+                    .padding(.leading, 8)
+                    .padding(.trailing, 2)
+                    .accessibilityHidden(true)
             }
         }
     }
