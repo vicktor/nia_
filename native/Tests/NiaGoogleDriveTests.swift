@@ -60,6 +60,9 @@ private final class FakeDrive {
             let id = q["upload_id"]!, data = body(request)
             var metadata = pending.removeValue(forKey:id)!
             metadata["size"] = String(data.count); metadata["md5Checksum"] = NiaGoogleDriveAPI.checksum(data)
+            // Real Drive reports the JSON space header as application/json,
+            // even when a previous client requested application/octet-stream.
+            if metadata["name"] as? String == "space.json" { metadata["mimeType"] = "application/json" }
             records[id] = metadata; payloads[id] = data; uploads += 1
             uploadOrder.append(metadata["name"] as! String)
             if loseNextUpload { loseNextUpload = false; throw URLError(.networkConnectionLost) }
@@ -166,6 +169,13 @@ private final class FakeDrive {
         let a = try NiaGoogleDriveTransport(api:api,folderID:folder.id,mirror:mirrorA)
         let b = try NiaGoogleDriveTransport(api:api,folderID:folder.id,mirror:mirrorB)
         try NiaSyncEngine.create(folder:mirrorA,key:key)
+        // Match the app: connect creates only the header; the next Sync first
+        // pulls that same folder, then exports the user's selected sessions.
+        try await a.push(key:key,cache:cacheA)
+        let headerID = fake.records.first { $0.value["name"] as? String == "space.json" }!.key
+        check(fake.records[headerID]?["mimeType"] as? String == "application/json","Drive classifies the header as JSON")
+        try await a.pull(key:key,cache:cacheA)
+        check(fake.downloads == 1,"first sync accepts the header created during connection")
         let engineA = try NiaSyncEngine(folder:mirrorA,key:key,cache:cacheA)
         let transcript = root.appendingPathComponent("transcript")
         let log = Data("\u{1b}[31mPRIVATE-FIXTURE\u{1b}[0m\r\n".utf8); try log.write(to:transcript)
@@ -175,6 +185,7 @@ private final class FakeDrive {
         await rejected("lost upload reply reported") { try await a.locked { try await a.push(key:key,cache:cacheA) } }
         try await a.locked { try await a.push(key:key,cache:cacheA) }
         check(fake.records.values.filter { $0["name"] as? String == "space.json" }.count == 1,"retry after lost reply never duplicates header")
+        check(Set(fake.records.values.compactMap { $0["name"] as? String }).count == fake.records.count,"retry after lost block reply never duplicates a file")
         check(fake.uploadOrder.last!.hasPrefix("revision-"),"checkpoint uploaded after blocks")
         check(fake.payloads.values.allSatisfy { $0.range(of:Data("PRIVATE-FIXTURE".utf8)) == nil },"no plaintext reaches Drive")
         let wrong = try NiaGoogleDriveTransport(api:api,folderID:folder.id,mirror:root.appendingPathComponent("wrong"))
@@ -192,6 +203,12 @@ private final class FakeDrive {
         try await a.push(key:key,cache:cacheA); try await b.pull(key:key,cache:cacheB)
         check(fake.uploads == previousUploads,"unchanged mirror uploads nothing")
         check(fake.downloads == previousDownloads + 2,"unchanged pulls download only space headers")
+        fake.records[headerID]!["mimeType"] = "application/octet-stream"
+        try await b.pull(key:key,cache:cacheB)
+        check(true,"older binary MIME space headers remain readable")
+        fake.records[headerID]!["mimeType"] = NiaDriveFile.folderMIME
+        await rejected("a folder named space.json is not a sync header") { try await b.pull(key:key,cache:cacheB) }
+        fake.records[headerID]!["mimeType"] = "application/json"
         try await a.locked { await rejected("transport serializes multiple instances") { try await a.locked {} } }
         check(NiaGoogleDriveTransport.localPath("blob-../../secret.bin") == nil && NiaGoogleDriveTransport.localPath("revision-../../secret.bin") == nil,"remote names cannot traverse paths")
         // Simultaneous continuations keep both branches across independent mirrors.
@@ -201,6 +218,9 @@ private final class FakeDrive {
         let branches = try engineB.synchronize(selected:[],deviceName:"Fixture Mac B") { _ in fatalError() }
         check(branches.count == 2 && branches.allSatisfy(\.hasConflict),"Drive preserves simultaneous branches")
         let blobID = fake.records.first { ($0.value["name"] as? String)?.hasPrefix("blob-") == true }!.key
+        fake.records[blobID]!["mimeType"] = "application/json"
+        await rejected("JSON MIME allowance applies only to the space header") { try await b.pull(key:key,cache:cacheB) }
+        fake.records[blobID]!["mimeType"] = "application/octet-stream"
         fake.corruptDownload = blobID
         let tampered = try NiaGoogleDriveTransport(api:api,folderID:folder.id,mirror:root.appendingPathComponent("tampered"))
         await rejected("corrupt download fails") { try await tampered.pull(key:key,cache:root.appendingPathComponent("cache-tampered")) }

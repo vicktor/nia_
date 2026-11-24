@@ -111,12 +111,13 @@ final class NiaGoogleDriveAPI: Sendable {
     }
     func upload(id: String, name: String, parent: String, data: Data) async throws {
         guard Self.validID(id), Self.validID(parent), data.count <= 16 * 1024 * 1024 + 28 else { throw NiaDriveError.response }
+        let mimeType = name == "space.json" ? "application/json" : "application/octet-stream"
         var request = URLRequest(url:url("/upload/drive/v3/files",["uploadType":"resumable","fields":Self.fields]))
         request.httpMethod = "POST"
         request.setValue("application/json; charset=UTF-8",forHTTPHeaderField:"Content-Type")
-        request.setValue("application/octet-stream",forHTTPHeaderField:"X-Upload-Content-Type")
+        request.setValue(mimeType,forHTTPHeaderField:"X-Upload-Content-Type")
         request.setValue(String(data.count),forHTTPHeaderField:"X-Upload-Content-Length")
-        request.httpBody = try JSONSerialization.data(withJSONObject:["id":id,"name":name,"parents":[parent],"mimeType":"application/octet-stream"])
+        request.httpBody = try JSONSerialization.data(withJSONObject:["id":id,"name":name,"parents":[parent],"mimeType":mimeType])
         let (_,response) = try await call(request,conflict:true)
         if response.statusCode != 409 {
             guard let location = response.value(forHTTPHeaderField:"Location"), let destination = URL(string:location),
@@ -124,7 +125,7 @@ final class NiaGoogleDriveAPI: Sendable {
                   destination.password == nil, destination.port == nil || destination.port == 443,
                   destination.path == "/upload/drive/v3/files" else { throw NiaDriveError.response }
             var upload = URLRequest(url:destination); upload.httpMethod = "PUT"; upload.httpBody = data
-            upload.setValue("application/octet-stream",forHTTPHeaderField:"Content-Type")
+            upload.setValue(mimeType,forHTTPHeaderField:"Content-Type")
             upload.setValue(String(data.count),forHTTPHeaderField:"Content-Length")
             let (_,_) = try await call(upload,conflict:true)
         }
@@ -201,7 +202,12 @@ final class NiaGoogleDriveTransport {
         var byName: [String:NiaDriveFile] = [:]
         var bytes: UInt64 = 0
         for file in files.sorted(by:{$0.id < $1.id}) where Self.localPath(file.name) != nil {
-            guard file.mimeType == "application/octet-stream", file.parents?.contains(folderID) == true,
+            // The header is JSON. Drive can classify an existing header as
+            // application/json even when an older client sent a binary type.
+            // Content is still bounded, checksummed and authenticated on pull.
+            let supportedType = file.mimeType == "application/octet-stream"
+                || (file.name == "space.json" && file.mimeType == "application/json")
+            guard supportedType, file.parents?.contains(folderID) == true,
                   let size = file.size.flatMap(UInt64.init), size <= Self.limit(file.name) else { throw NiaDriveError.conflict }
             bytes += size; guard bytes <= 4 * 1024 * 1024 * 1024 else { throw NiaSyncError.limit }
             if let previous = byName[file.name], file.name == "space.json", previous.md5Checksum != file.md5Checksum { throw NiaDriveError.conflict }
