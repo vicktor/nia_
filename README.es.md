@@ -77,6 +77,7 @@ En las sesiones Zsh locales, nia_ registra los **comandos completados** con fech
 
 ## Renombrar sesiones y recuperar espacios de trabajo
 
+- Escribe un nombre en **Nueva sesión** y pulsa **Intro** o **+**. El foco del teclado pasa directamente al nuevo terminal, también si ya había otro abierto o estás usando un panel dividido.
 - Doble clic sobre el nombre de una sesión en la barra lateral para editarlo. **Intro** guarda; **Escape** cancela. También disponible desde clic derecho → **Renombrar sesión**.
 - Los nombres son etiquetas independientes del ID estable guardadas en SQLite. Cambiar el nombre no altera la PTY, los comandos, el scrollback, el tmux remoto ni la distribución guardada.
 - Si macOS abre nia_ con un identificador de ventana nuevo, la primera ventana vuelve a recuperar todas las sesiones abiertas anteriormente. Se restauran las shells de todas las pestañas, no solo las visibles.

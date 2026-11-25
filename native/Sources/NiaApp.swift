@@ -1077,7 +1077,8 @@ struct MainWindow: View {
     private func create() {
         model.create(newSession)
         newSession = ""
-        addingSession = false
+        // activate() transfers first responder to the terminal. Clearing the
+        // FocusState here can run later in SwiftUI's update and undo that focus.
     }
 }
 

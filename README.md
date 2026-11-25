@@ -77,6 +77,7 @@ In a local Zsh session, nia_ records **completed commands** together with their 
 
 ## Session rename and workspace recovery
 
+- Enter a name in **New session** and press **Return** or click **+**. Keyboard focus moves directly to the new terminal, including when another terminal is already open or a split pane is active.
 - Double-click a session name in the sidebar to edit its display title in place. **Return** saves; **Escape** cancels. Right-click → **Rename session** is also available.
 - Titles are aliases stored separately in SQLite. Renaming never changes the session's stable ID, PTY, command history, scrollback, remote tmux name, or saved window layout.
 - If macOS starts with a fresh scene identifier, the first window now recovers all previously open sessions rather than appearing empty. Every recovered tab gets its shell restored, not just the currently visible split panes.
