@@ -179,6 +179,9 @@ final class NiaMetalView: MTKView, MTKViewDelegate {
             requestSizeReport()
         }
     }
+    var workingDirectory: String? {
+        didSet { if workingDirectory != oldValue { clearLinkHover() } }
+    }
     private var currentRevision: UInt64? = nil
     func present(_ frame: ScreenSnapshot?, revision: UInt64) {
         guard currentRevision != revision else { return }
@@ -193,11 +196,15 @@ final class NiaMetalView: MTKView, MTKViewDelegate {
     }
     private var terminalFrame: ScreenSnapshot? {
         didSet {
-            if hoveredLink != nil {
-                hoveredLink = nil
-                lastHoverCell = nil
-                NSCursor.arrow.set()
-            }
+            clearLinkHover()
+            needsDisplay = true
+        }
+    }
+    private func clearLinkHover() {
+        lastHoverCell = nil
+        if hoveredLink != nil {
+            hoveredLink = nil
+            NSCursor.arrow.set()
             needsDisplay = true
         }
     }
@@ -305,7 +312,7 @@ final class NiaMetalView: MTKView, MTKViewDelegate {
         let location = cell(at: point)
         if let old = lastHoverCell, old == location { return }
         lastHoverCell = location
-        let candidate = webLink(at: location)
+        let candidate = terminalLink(at: location)
         let changed = candidate?.url != hoveredLink?.url ||
             candidate?.row != hoveredLink?.row ||
             candidate?.firstColumn != hoveredLink?.firstColumn ||
@@ -520,69 +527,51 @@ final class NiaMetalView: MTKView, MTKViewDelegate {
             CharacterSet.alphanumerics.contains(scalar) || scalar == "_"
         }
     }
-    // Smart links: only inspect the clicked visible row, never scan scrollback
-    // on a render tick. This adds no background worker and no allocations on
-    // the steady-state Metal drawing path.
-    private static let webLinkPattern = try! NSRegularExpression(
-        pattern: #"https?://[^\s<>"']+"#,
-        options: [.caseInsensitive]
-    )
+    // Only inspect the pointer's visible row; file metadata is never read here.
     private var contextualURL: URL?
+    private static let fileOpeningQueue: OperationQueue = {
+        let queue = OperationQueue()
+        queue.name = "dev.nia.terminal.finder-links"
+        queue.qualityOfService = .utility
+        queue.maxConcurrentOperationCount = 2
+        return queue
+    }()
 
-    private func webURL(at location: (Int, Int)) -> URL? {
-        webLink(at: location)?.url
+    private func terminalLink(at location: (Int, Int)) -> HoveredLink? {
+        guard let frame = terminalFrame, frame.cells.indices.contains(location.0),
+              let link = NiaTerminalLinkDetector.link(in: frame.cells[location.0],
+                column: location.1, workingDirectory: workingDirectory) else { return nil }
+        return HoveredLink(url: link.url, row: location.0,
+                           firstColumn: link.firstColumn, lastColumn: link.lastColumn)
     }
 
-    private func webLink(at location: (Int, Int)) -> HoveredLink? {
-        guard let frame = terminalFrame,
-              frame.cells.indices.contains(location.0),
-              frame.cells[location.0].indices.contains(location.1) else { return nil }
-        let cells = frame.cells[location.0]
-        var value = ""
-        var columns: [Int] = []
-        for (column, cell) in cells.enumerated() {
-            if cell.continuation { continue }
-            let glyph = cell.t.isEmpty ? " " : cell.t
-            value += glyph
-            for _ in glyph.utf16 { columns.append(column) }
-        }
-        let ns = value as NSString
-        guard ns.length > 0 else { return nil }
-        let matches = Self.webLinkPattern.matches(
-            in: value, range: NSRange(location: 0, length: ns.length)
-        )
-        for match in matches {
-            let first = match.range.location
-            let last = first + match.range.length
-            guard first < columns.count, last <= columns.count,
-                  columns[first] <= location.1,
-                  location.1 <= columns[last - 1] else { continue }
-            var candidate = ns.substring(with: match.range)
-            while let lastChar = candidate.last, ".,;:!?)]}".contains(lastChar) {
-                candidate.removeLast()
+    private func openLink(_ url: URL) {
+        guard url.isFileURL else { NSWorkspace.shared.open(url); return }
+        // A slow mount or cloud provider must not block keyboard/scroll input.
+        guard Self.fileOpeningQueue.operationCount < 16 else { NSSound.beep(); return }
+        Self.fileOpeningQueue.addOperation {
+            var isDirectory: ObjCBool = false
+            let exists = FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory)
+            let isPackage = (try? url.resourceValues(forKeys: [.isPackageKey]).isPackage) == true
+            let openDirectory = isDirectory.boolValue && !isPackage
+            DispatchQueue.main.async {
+                guard exists else { NSSound.beep(); return }
+                if openDirectory {
+                    NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: url.path)
+                } else {
+                    NSWorkspace.shared.activateFileViewerSelecting([url])
+                }
             }
-            guard !candidate.isEmpty, candidate.count <= 2048,
-                  let url = URL(string: candidate),
-                  let scheme = url.scheme?.lowercased(),
-                  (scheme == "http" || scheme == "https"),
-                  let host = url.host, !host.isEmpty,
-                  url.user == nil, url.password == nil else { return nil }
-            let actualEnd = first + (candidate as NSString).length
-            guard actualEnd <= columns.count, actualEnd > first,
-                  location.1 <= columns[actualEnd - 1] else { return nil }
-            return HoveredLink(url: url, row: location.0,
-                firstColumn: columns[first], lastColumn: columns[actualEnd - 1])
         }
-        return nil
     }
 
     @objc private func openContextURL(_ sender: Any?) {
-        if let url = contextualURL { NSWorkspace.shared.open(url) }
+        if let url = contextualURL { openLink(url) }
     }
 
     @objc private func copyContextURL(_ sender: Any?) {
         guard let url = contextualURL else { return }
-        copyToPasteboard(url.absoluteString)
+        copyToPasteboard(url.isFileURL ? url.path : url.absoluteString)
     }
 
     private func selectWord(at location: (Int, Int)) {
@@ -679,10 +668,10 @@ final class NiaMetalView: MTKView, MTKViewDelegate {
         window?.makeFirstResponder(self)
         onFocus?()
         let point = convert(event.locationInWindow, from: nil)
-        // Explicit Cmd-click opens HTTP(S) links without touching the PTY.
+        // Cmd-click opens web links or reveals local paths without sending input.
         if event.modifierFlags.contains(.command),
-           let url = webURL(at: cell(at: point)) {
-            NSWorkspace.shared.open(url)
+           let link = terminalLink(at: cell(at: point)) {
+            openLink(link.url)
             mouseDownPoint = nil
             return
         }
@@ -874,12 +863,12 @@ final class NiaMetalView: MTKView, MTKViewDelegate {
         window?.makeFirstResponder(self)
         onFocus?()
         let menu = NSMenu(title: NiaL10n.string("Insertar en terminal"))
-        contextualURL = webURL(at: cell(at: convert(event.locationInWindow, from: nil)))
-        if contextualURL != nil {
-            let open = NSMenuItem(title: NiaL10n.string("Abrir enlace"), action: #selector(openContextURL(_:)), keyEquivalent: "")
+        contextualURL = terminalLink(at: cell(at: convert(event.locationInWindow, from: nil)))?.url
+        if let contextualURL {
+            let open = NSMenuItem(title: NiaL10n.string(contextualURL.isFileURL ? "Mostrar en Finder" : "Abrir enlace"), action: #selector(openContextURL(_:)), keyEquivalent: "")
             open.target = self
             menu.addItem(open)
-            let copy = NSMenuItem(title: NiaL10n.string("Copiar enlace"), action: #selector(copyContextURL(_:)), keyEquivalent: "")
+            let copy = NSMenuItem(title: NiaL10n.string(contextualURL.isFileURL ? "Copiar ruta" : "Copiar enlace"), action: #selector(copyContextURL(_:)), keyEquivalent: "")
             copy.target = self
             menu.addItem(copy)
             menu.addItem(.separator())
@@ -954,6 +943,7 @@ final class NiaMetalView: MTKView, MTKViewDelegate {
 
 struct TerminalPanel: NSViewRepresentable {
     let sessionID: String
+    let workingDirectory: String?
     let frame: ScreenSnapshot?
     let revision: UInt64
     let cursorBlink: Bool
@@ -976,6 +966,7 @@ struct TerminalPanel: NSViewRepresentable {
         view.onFocus = onFocus
         view.onCopy = onCopy
         view.activeSessionID = sessionID
+        view.workingDirectory = workingDirectory
         view.updateFocusRequest(focusEpoch)
         return view
     }
@@ -986,6 +977,7 @@ struct TerminalPanel: NSViewRepresentable {
         view.onFocus = onFocus
         view.onCopy = onCopy
         view.activeSessionID = sessionID
+        view.workingDirectory = workingDirectory
         // Apply only this pane's current request, synchronously when attached.
         // Queued responder changes can overtake a subsequent click/tab switch.
         view.updateFocusRequest(focusEpoch)

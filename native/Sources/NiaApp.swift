@@ -1022,6 +1022,7 @@ struct MainWindow: View {
                 .background(.bar)
             }
             TerminalPanel(sessionID: session,
+                workingDirectory: model.sessions.first(where: { $0.id == session && $0.remote_host == nil })?.cwd,
                 frame: model.screen(for: session), revision: model.revision(for: session),
                 cursorBlink: cursorBlink, cursorShape: cursorShape, opacity: terminalOpacity,
                 fontName: terminalFontName, fontSize: terminalFontSize,

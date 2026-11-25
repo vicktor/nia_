@@ -170,6 +170,8 @@
 "Exit interception is only supported in local Zsh" = "Exit interception is only supported in local Zsh";
 "Abrir enlace" = "Open link";
 "Copiar enlace" = "Copy link";
+"Mostrar en Finder" = "Show in Finder";
+"Copiar ruta" = "Copy path";
 "No hay sesiones guardadas" = "No saved sessions";
 "Historial de comandos" = "Command timeline";
 "Cerrar" = "Close";
