@@ -56,6 +56,11 @@ jobs:
           swiftc native/Sources/NiaScreenDecoder.swift native/Sources/NiaTerminalLink.swift native/Tests/NiaTerminalLinkTests.swift -o /tmp/nia-terminal-link-tests
           /tmp/nia-terminal-link-tests
 
+      - name: Test Claude account usage
+        run: |
+          swiftc -parse-as-library native/Sources/NiaUsageModels.swift native/Sources/NiaClaudeUsage.swift native/Tests/NiaClaudeUsageTests.swift -o /tmp/nia-claude-usage-tests
+          /tmp/nia-claude-usage-tests
+
       - name: Test window placement restoration
         run: |
           swiftc native/Sources/NiaWindowPlacement.swift native/Tests/NiaWindowPlacementTests.swift -o /tmp/nia-window-placement-tests

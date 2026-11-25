@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: MPL-2.0
 import Foundation
+import CoreFoundation
 
 struct NiaQuotaWindow: Equatable, Sendable, Identifiable {
     let minutes: Int
     let usedPercent: Double
     let resetsAt: Date?
-    var id: Int { minutes }
+    var scope: String? = nil
+    var id: String { "\(minutes):\(scope ?? "all")" }
     func isCurrent(at now: Date = Date()) -> Bool { resetsAt.map { $0 > now } ?? true }
 }
 
@@ -14,7 +16,7 @@ struct NiaUsageSnapshot: Equatable, Sendable {
     let tokens: Int64?
     let tokenLabel: String
     let updatedAt: Date
-    var weekly: NiaQuotaWindow? { windows.first { $0.minutes == 10080 && $0.isCurrent() } }
+    var weekly: NiaQuotaWindow? { windows.first { $0.minutes == 10080 && $0.scope == nil && $0.isCurrent() } }
     var stale: Bool { Date().timeIntervalSince(updatedAt) > 900 }
 
     static func window(_ value: Any?, minutes: Int?, percentKey: String, resetKey: String) -> NiaQuotaWindow? {
@@ -54,13 +56,60 @@ struct NiaUsageSnapshot: Equatable, Sendable {
         return Self(windows: windows, tokens: tokens, tokenLabel: "Tokens de la última sesión conectada",
                     updatedAt: Date(timeIntervalSince1970: updated))
     }
+
+    // get_usage is the account source used by Claude's /usage screen. The
+    // status-line header snapshot can disagree even when it was just written.
+    static func claudeAccount(_ response: [String: Any], now: Date = Date()) throws -> Self {
+        guard let available = response["rate_limits_available"] as? Bool else { throw NiaUsageError.claudeFailed }
+        guard !available || response["rate_limits"] is [String: Any] else { throw NiaUsageError.claudeFailed }
+        let limits = available ? (response["rate_limits"] as? [String: Any] ?? [:]) : [:]
+        let dates = ISO8601DateFormatter()
+        func window(_ value: Any?, minutes: Int, scope: String? = nil) -> NiaQuotaWindow? {
+            guard let object = value as? [String: Any],
+                  let number = object["utilization"] as? NSNumber,
+                  CFGetTypeID(number) != CFBooleanGetTypeID(),
+                  number.doubleValue.isFinite, (0...100).contains(number.doubleValue),
+                  let timestamp = object["resets_at"] as? String else { return nil }
+            dates.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            var reset = dates.date(from: timestamp)
+            if reset == nil {
+                dates.formatOptions = [.withInternetDateTime]
+                reset = dates.date(from: timestamp)
+            }
+            guard let reset, reset.timeIntervalSince1970 > 0 else { return nil }
+            return NiaQuotaWindow(minutes: minutes, usedPercent: number.doubleValue, resetsAt: reset, scope: scope)
+        }
+        var windows = [window(limits["five_hour"], minutes: 300),
+                       window(limits["seven_day"], minutes: 10080)].compactMap { $0 }
+        for model in (limits["model_scoped"] as? [[String: Any]] ?? []).prefix(32) {
+            guard let name = model["display_name"] as? String,
+                  !name.isEmpty, name.count <= 80,
+                  !name.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains),
+                  !windows.contains(where: { $0.scope == name }),
+                  let value = window(model, minutes: 10080, scope: name) else { continue }
+            windows.append(value)
+        }
+        // Older CLI responses provide these model windows separately.
+        for (key, name) in [("seven_day_opus", "Opus"), ("seven_day_sonnet", "Sonnet")] {
+            if !windows.contains(where: { $0.scope == name }),
+               let value = window(limits[key], minutes: 10080, scope: name) { windows.append(value) }
+        }
+        return Self(windows: windows, tokens: nil, tokenLabel: "Tokens de la última sesión conectada", updatedAt: now)
+    }
+
+    func withClaudeSessionTokens(_ session: Self?) -> Self {
+        // Session reports must never replace account quotas or make them look fresh.
+        Self(windows: windows, tokens: session?.tokens,
+             tokenLabel: "Tokens de la última sesión conectada", updatedAt: updatedAt)
+    }
 }
 
 enum NiaUsageError: String, Error, LocalizedError {
     case unavailable = "No hay datos de consumo disponibles."
     case codexMissing = "No se encuentra Codex CLI. Selecciona su ejecutable en Preferencias → IA."
     case codexFailed = "No se pudo consultar Codex. Comprueba su sesión iniciada y la conexión."
-    case claudeWaiting = "Esperando datos de Claude Code. Abre una sesión después de conectar y envía un mensaje."
+    case claudeMissing = "No se encuentra Claude Code CLI. Selecciona su ejecutable en Preferencias → IA."
+    case claudeFailed = "No se pudo consultar Claude Code. Actualiza su CLI y comprueba su sesión iniciada y la conexión."
     case settingsChanged = "La configuración de Claude ha cambiado. Se ha conservado sin sobrescribirla."
     case settingsInvalid = "No se pudo leer la configuración de Claude Code."
     var errorDescription: String? { rawValue }

@@ -76,7 +76,7 @@ swiftc -O -parse-as-library \
     native/Sources/NiaFonts.swift \
     native/Sources/NiaSyncEngine.swift native/Sources/NiaSync.swift \
     native/Sources/NiaGoogleOAuth.swift native/Sources/NiaGoogleDrive.swift native/Sources/NiaGoogleDriveView.swift \
-    native/Sources/NiaUsageModels.swift native/Sources/NiaCodexUsage.swift native/Sources/NiaUsageView.swift \
+    native/Sources/NiaUsageModels.swift native/Sources/NiaCodexUsage.swift native/Sources/NiaClaudeUsage.swift native/Sources/NiaUsageView.swift \
     -L "$APP/Contents/Frameworks" -lnia_core \
     -Xlinker -rpath -Xlinker '@executable_path/../Frameworks' \
     -framework AppKit -framework SwiftUI -framework Metal -framework MetalKit -framework CoreText \
@@ -111,7 +111,7 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
   <key>CFBundleExecutable</key><string>nia</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleIconFile</key><string>nia_.icns</string>
-  <key>CFBundleShortVersionString</key><string>0.8.10</string>
+  <key>CFBundleShortVersionString</key><string>0.8.11</string>
   <key>CFBundleVersion</key><string>1</string>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>NSHighResolutionCapable</key><true/>

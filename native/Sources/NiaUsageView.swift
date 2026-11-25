@@ -11,7 +11,12 @@ import SwiftUI
     @Published private(set) var refreshing = false
     private var timer: Timer?
     private var lastCodexPoll = Date.distantPast
-    private var claudeStamp: Date?
+    private var lastClaudePoll = Date.distantPast
+    private let claudeSnapshotURL: URL
+
+    init(claudeSnapshotURL: URL = NiaUsagePaths.claudeSnapshot) {
+        self.claudeSnapshotURL = claudeSnapshotURL
+    }
 
     func start() {
         guard timer == nil else { return }
@@ -27,24 +32,32 @@ import SwiftUI
         let codexEnabled = defaults.object(forKey: "nia.usage.codex") as? Bool ?? true
         let claudeEnabled = defaults.object(forKey: "nia.usage.claude") as? Bool ?? true
         let pollCodex = codexEnabled && (force || Date().timeIntervalSince(lastCodexPoll) >= 300)
+        let pollClaude = claudeEnabled && (force || Date().timeIntervalSince(lastClaudePoll) >= 300)
         let path = defaults.string(forKey: "nia.usage.codexPath") ?? ""
+        let claudePath = defaults.string(forKey: "nia.usage.claudePath") ?? ""
         if pollCodex { lastCodexPoll = Date() }
+        if pollClaude { lastClaudePoll = Date() }
         refreshing = true
         Task {
             if claudeEnabled {
-                let url = NiaUsagePaths.claudeSnapshot
-                do {
-                    let stamp = try url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
-                    if stamp != claudeStamp || force {
-                        let value = try await Task.detached {
-                            guard (try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0) < 65536 else { throw NiaUsageError.unavailable }
-                            return try NiaUsageSnapshot.claude(Data(contentsOf: url))
-                        }.value
-                        claude = value
-                        claudeStamp = stamp
+                if pollClaude {
+                    do {
+                        claude = try await Task.detached { try NiaClaudeUsage.read(customPath: claudePath) }.value
                         claudeError = nil
+                    } catch {
+                        // Keep the last account reading, visibly marked as failed.
+                        // Never fall back to the status-line quota: it can disagree
+                        // with /usage even when its file has a newer timestamp.
+                        claudeError = NiaL10n.string((error as? NiaUsageError)?.rawValue ?? NiaUsageError.claudeFailed.rawValue)
                     }
-                } catch { claudeError = NiaL10n.string(NiaUsageError.claudeWaiting.rawValue) }
+                }
+                let url = claudeSnapshotURL
+                let session = await Task.detached { () -> NiaUsageSnapshot? in
+                    guard let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize,
+                          size < 65536, let data = try? Data(contentsOf: url) else { return nil }
+                    return try? NiaUsageSnapshot.claude(data)
+                }.value
+                claude = claude?.withClaudeSessionTokens(session)
             }
             if pollCodex {
                 do {
@@ -124,7 +137,11 @@ private struct NiaProviderUsage: View {
                             if window.isCurrent() {
                                 VStack(alignment: .leading, spacing: 4) {
                                     HStack {
-                                        Text(LocalizedStringKey(window.minutes == 10080 ? "Semana" : window.minutes == 300 ? "5 horas" : "Otra ventana de cuota"))
+                                        if let scope = window.scope {
+                                            Text(String(format: NiaL10n.string("Semana (%@)"), scope))
+                                        } else {
+                                            Text(LocalizedStringKey(window.minutes == 10080 ? "Semana" : window.minutes == 300 ? "5 horas" : "Otra ventana de cuota"))
+                                        }
                                         Spacer()
                                         Text("\(Int(window.usedPercent.rounded())) %").monospacedDigit()
                                     }
@@ -160,6 +177,7 @@ struct NiaUsageSettings: View {
     @AppStorage("nia.usage.codex") private var codex = true
     @AppStorage("nia.usage.claude") private var claude = true
     @AppStorage("nia.usage.codexPath") private var codexPath = ""
+    @AppStorage("nia.usage.claudePath") private var claudePath = ""
     @State private var connected = NiaClaudeConnection.isConnected()
     @State private var error: String?
     var body: some View {
@@ -185,6 +203,19 @@ struct NiaUsageSettings: View {
                 }
                 if claude {
                     HStack {
+                        Text("Claude Code CLI")
+                        Text(claudePath.isEmpty ? NiaL10n.string("Detectar automáticamente") : claudePath).font(.caption).lineLimit(1).truncationMode(.middle)
+                        Spacer()
+                        Button("Seleccionar…") {
+                            let panel = NSOpenPanel()
+                            panel.canChooseDirectories = false
+                            if panel.runModal() == .OK, let url = panel.url {
+                                claudePath = url.path
+                                NiaUsageMonitor.shared.refresh(force: true)
+                            }
+                        }
+                    }
+                    HStack {
                         Button {
                             do {
                                 if connected { try NiaClaudeConnection.disconnect() }
@@ -193,13 +224,13 @@ struct NiaUsageSettings: View {
                                 error = nil
                                 NiaUsageMonitor.shared.refresh(force: true)
                             } catch { self.error = NiaL10n.string((error as? NiaUsageError)?.rawValue ?? NiaUsageError.settingsInvalid.rawValue) }
-                        } label: { Text(LocalizedStringKey(connected ? "Desconectar Claude Code" : "Conectar Claude Code")) }
+                        } label: { Text(LocalizedStringKey(connected ? "Desconectar tokens de sesión" : "Conectar tokens de sesión")) }
                         if connected { Label("Conectado", systemImage: "checkmark.circle") }
                     }
-                    Text("Conectar añade un lector a la línea de estado de Claude Code y conserva el comando anterior. Reinicia las sesiones de Claude abiertas para aplicarlo. Desconectar restaura la configuración anterior.")
+                    Text("Opcional: conecta la línea de estado para mostrar los tokens de la última sesión. Conserva el comando anterior y requiere reiniciar las sesiones de Claude abiertas. La cuota semanal se consulta sin este adaptador.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
-                Text("Codex consulta su cuenta cada cinco minutos. Claude aporta datos después de sus respuestas. Los límites dependen del plan; no se leen conversaciones ni se guardan credenciales.")
+                Text("Claude y Codex consultan sus cuotas cada cinco minutos mediante sus CLI, sin enviar mensajes al modelo. Los límites dependen del plan; no se leen conversaciones ni se guardan credenciales.")
                     .font(.caption).foregroundStyle(.secondary)
                 if let error { Text(verbatim: error).foregroundStyle(.red).font(.caption) }
                 Button("Actualizar consumo") { NiaUsageMonitor.shared.refresh(force: true) }

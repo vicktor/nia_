@@ -468,12 +468,12 @@
       "es": [
         "Cuotas de Claude y Codex a la vista",
         "Barra opcional con consumo semanal, reinicios y tokens con su ámbito indicado.",
-        "Codex consulta su CLI local. Claude necesita conectar el adaptador de su línea de estado y emitir una respuesta. Los datos dependen del plan; una cuota ausente no se muestra como cero. Implementado en desarrollo."
+        "Claude y Codex consultan sus CLI locales cada cinco minutos, sin enviar mensajes al modelo. Claude separa la cuota general de los límites por modelo; su adaptador de tokens de sesión es opcional. Requiere CLI reciente y sesión iniciada. Una cuota ausente no se muestra como cero."
       ],
       "en": [
         "Claude and Codex quotas in view",
         "An optional bar with weekly usage, resets and token counts labeled by scope.",
-        "Codex reads its local CLI. Claude needs its status-line adapter connected and a response emitted. Data depends on the plan; unavailable quota is not displayed as zero. Implemented in development."
+        "Claude and Codex query their local CLIs every five minutes, without sending model messages. Claude separates overall quota from model-specific limits; its session-token adapter is optional. Requires a recent CLI and an active login. Unavailable quota is not displayed as zero."
       ]
     },
     {

@@ -363,3 +363,11 @@
 "iCloud Drive / carpeta local" = "iCloud Drive / carpeta local";
 "Google Drive directo" = "Google Drive directo";
 "nia_ debe estar abierta para sincronizar. La conexión directa sube y descarga las versiones cifradas mediante la API de Google Drive." = "nia_ debe estar abierta para sincronizar. La conexión directa sube y descarga las versiones cifradas mediante la API de Google Drive.";
+"Claude Code CLI" = "Claude Code CLI";
+"No se encuentra Claude Code CLI. Selecciona su ejecutable en Preferencias → IA." = "No se encuentra Claude Code CLI. Selecciona su ejecutable en Preferencias → IA.";
+"No se pudo consultar Claude Code. Actualiza su CLI y comprueba su sesión iniciada y la conexión." = "No se pudo consultar Claude Code. Actualiza su CLI y comprueba su sesión iniciada y la conexión.";
+"Semana (%@)" = "Semana (%@)";
+"Conectar tokens de sesión" = "Conectar tokens de sesión";
+"Desconectar tokens de sesión" = "Desconectar tokens de sesión";
+"Opcional: conecta la línea de estado para mostrar los tokens de la última sesión. Conserva el comando anterior y requiere reiniciar las sesiones de Claude abiertas. La cuota semanal se consulta sin este adaptador." = "Opcional: conecta la línea de estado para mostrar los tokens de la última sesión. Conserva el comando anterior y requiere reiniciar las sesiones de Claude abiertas. La cuota semanal se consulta sin este adaptador.";
+"Claude y Codex consultan sus cuotas cada cinco minutos mediante sus CLI, sin enviar mensajes al modelo. Los límites dependen del plan; no se leen conversaciones ni se guardan credenciales." = "Claude y Codex consultan sus cuotas cada cinco minutos mediante sus CLI, sin enviar mensajes al modelo. Los límites dependen del plan; no se leen conversaciones ni se guardan credenciales.";
