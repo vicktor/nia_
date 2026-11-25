@@ -6,6 +6,7 @@ import MetalKit
 import CoreText
 import CryptoKit
 import Security
+import UniformTypeIdentifiers
 
 // Nia renders the VT grid in Metal. SwiftUI remains responsible for the macOS chrome.
 // Each atlas glyph is rasterized only once for a given font size and screen scale.
@@ -545,21 +546,46 @@ final class NiaMetalView: MTKView, MTKViewDelegate {
                            firstColumn: link.firstColumn, lastColumn: link.lastColumn)
     }
 
-    private func openLink(_ url: URL) {
+    private func openLink(_ url: URL, revealInFinder: Bool = false) {
         guard url.isFileURL else { NSWorkspace.shared.open(url); return }
         // A slow mount or cloud provider must not block keyboard/scroll input.
         guard Self.fileOpeningQueue.operationCount < 16 else { NSSound.beep(); return }
         Self.fileOpeningQueue.addOperation {
             var isDirectory: ObjCBool = false
             let exists = FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory)
-            let isPackage = (try? url.resourceValues(forKeys: [.isPackageKey]).isPackage) == true
+            let values = try? url.resourceValues(forKeys: [.isPackageKey, .contentTypeKey])
+            let isPackage = values?.isPackage == true
+            let type = values?.contentType ?? UTType(filenameExtension: url.pathExtension)
             let openDirectory = isDirectory.boolValue && !isPackage
+            let isHTML = type?.conforms(to: .html) == true
+            let isImage = type?.conforms(to: .image) == true
+            // Document links should not become a shortcut for launching binaries.
+            let revealOnly = type?.conforms(to: .application) == true || type?.conforms(to: .executable) == true
             DispatchQueue.main.async {
                 guard exists else { NSSound.beep(); return }
-                if openDirectory {
+                if revealInFinder || revealOnly {
+                    NSWorkspace.shared.activateFileViewerSelecting([url])
+                } else if openDirectory {
                     NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: url.path)
                 } else {
-                    NSWorkspace.shared.activateFileViewerSelecting([url])
+                    // HTML follows the default browser, even if .html files
+                    // are otherwise associated with an editor on this Mac.
+                    let application: URL?
+                    if isHTML {
+                        application = NSWorkspace.shared.urlForApplication(toOpen: URL(string: "https://example.com")!)
+                    } else if isImage {
+                        application = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.Preview")
+                    } else {
+                        application = nil
+                    }
+                    if let application {
+                        NSWorkspace.shared.open([url], withApplicationAt: application,
+                                                configuration: NSWorkspace.OpenConfiguration()) { _, error in
+                            if error != nil { DispatchQueue.main.async { NSSound.beep() } }
+                        }
+                    } else if !NSWorkspace.shared.open(url) {
+                        NSSound.beep()
+                    }
                 }
             }
         }
@@ -567,6 +593,10 @@ final class NiaMetalView: MTKView, MTKViewDelegate {
 
     @objc private func openContextURL(_ sender: Any?) {
         if let url = contextualURL { openLink(url) }
+    }
+
+    @objc private func revealContextFile(_ sender: Any?) {
+        if let url = contextualURL, url.isFileURL { openLink(url, revealInFinder: true) }
     }
 
     @objc private func copyContextURL(_ sender: Any?) {
@@ -668,7 +698,7 @@ final class NiaMetalView: MTKView, MTKViewDelegate {
         window?.makeFirstResponder(self)
         onFocus?()
         let point = convert(event.locationInWindow, from: nil)
-        // Cmd-click opens web links or reveals local paths without sending input.
+        // Cmd-click opens web links or local documents without sending input.
         if event.modifierFlags.contains(.command),
            let link = terminalLink(at: cell(at: point)) {
             openLink(link.url)
@@ -865,9 +895,14 @@ final class NiaMetalView: MTKView, MTKViewDelegate {
         let menu = NSMenu(title: NiaL10n.string("Insertar en terminal"))
         contextualURL = terminalLink(at: cell(at: convert(event.locationInWindow, from: nil)))?.url
         if let contextualURL {
-            let open = NSMenuItem(title: NiaL10n.string(contextualURL.isFileURL ? "Mostrar en Finder" : "Abrir enlace"), action: #selector(openContextURL(_:)), keyEquivalent: "")
+            let open = NSMenuItem(title: NiaL10n.string(contextualURL.isFileURL ? "Abrir" : "Abrir enlace"), action: #selector(openContextURL(_:)), keyEquivalent: "")
             open.target = self
             menu.addItem(open)
+            if contextualURL.isFileURL {
+                let reveal = NSMenuItem(title: NiaL10n.string("Mostrar en Finder"), action: #selector(revealContextFile(_:)), keyEquivalent: "")
+                reveal.target = self
+                menu.addItem(reveal)
+            }
             let copy = NSMenuItem(title: NiaL10n.string(contextualURL.isFileURL ? "Copiar ruta" : "Copiar enlace"), action: #selector(copyContextURL(_:)), keyEquivalent: "")
             copy.target = self
             menu.addItem(copy)
