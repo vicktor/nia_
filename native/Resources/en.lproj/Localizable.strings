@@ -327,6 +327,12 @@
 "Todavía no hay versiones disponibles. Selecciona sesiones en Preferencias → Sync y sincroniza ambos Macs." = "No versions are available yet. Select sessions in Settings → Sync and sync both Macs.";
 "Hay versiones paralelas; se conservan ambas." = "There are parallel versions; both are retained.";
 "Continuar aquí" = "Continue here";
+"Restaurar todas" = "Restore all";
+"Restaura todas las sesiones compartidas o continúa una por separado. Las sesiones abiertas se conservan." = "Restore all shared sessions or continue one separately. Open sessions are preserved.";
+"Restaurando sesiones: %d de %d…" = "Restoring sessions: %d of %d…";
+"Sesiones restauradas: %d." = "Sessions restored: %d.";
+"Sesiones restauradas: %d. Pendientes: %d. Revisa las indicaciones de cada sesión." = "Sessions restored: %d. Pending: %d. Check the instructions for each session.";
+"Elige la carpeta del proyecto para «%@» en este Mac." = "Choose the project folder for “%@” on this Mac.";
 "Elegir carpeta del proyecto…" = "Choose project folder…";
 "Configurar sincronización en Preferencias → Sync" = "Configure sync in Settings → Sync";
 "Sync" = "Sync";
@@ -360,6 +366,9 @@
 "Se muestran las carpetas de sincronización creadas por nia_. Usa la misma cuenta de Google y la misma clave en el otro Mac." = "Sync folders created by nia_ are shown. Use the same Google account and key on your other Mac.";
 "Sincronización con Google Drive completada." = "Google Drive sync completed.";
 "Servicio de sincronización" = "Sync service";
+"Sincronización conectada" = "Sync connected";
+"Cuenta de Google vinculada" = "Google account linked";
+"Conecta un espacio de sincronización para compartir o recuperar tus sesiones." = "Connect a sync space to share or restore your sessions.";
 "iCloud Drive / carpeta local" = "iCloud Drive / local folder";
 "Google Drive directo" = "Direct Google Drive";
 "nia_ debe estar abierta para sincronizar. La conexión directa sube y descarga las versiones cifradas mediante la API de Google Drive." = "nia_ must be open to sync. The direct connection uploads and downloads encrypted versions through the Google Drive API.";

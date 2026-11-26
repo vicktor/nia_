@@ -24,6 +24,10 @@ private enum NiaSyncKeychain {
 
 private struct NiaSyncLocal: Decodable, Identifiable, Sendable { let id: String; let title: String; let cwd: String }
 private struct NiaSyncFailure: Error, LocalizedError { let message: String; var errorDescription: String? { message } }
+struct NiaSyncRestoreIssue {
+    let message: String
+    let needsDirectory: Bool
+}
 private enum NiaSyncBridge {
     static func request(_ values: [String:String]) throws -> Data {
         let input = String(decoding:try JSONEncoder().encode(values),as:UTF8.self)
@@ -54,6 +58,7 @@ private enum NiaSyncBridge {
     @Published fileprivate var local: [NiaSyncLocal] = []
     @Published private(set) var selected: Set<String> = []
     @Published private(set) var directoryRequest: NiaSyncItem?
+    @Published private(set) var restoreIssues: [String:NiaSyncRestoreIssue] = [:]
     private var timer: Timer?
     private var catalogBusy = false
     private var pendingGoogleCreation: (id:String,name:String,key:String)?
@@ -112,7 +117,7 @@ private enum NiaSyncBridge {
         UserDefaults.standard.set(drive,forKey:"nia.sync.google.folder")
         UserDefaults.standard.set(name,forKey:"nia.sync.google.name")
         UserDefaults.standard.set(true,forKey:"nia.sync.enabled")
-        connected = true; enabled = true; items = []
+        connected = true; enabled = true; items = []; restoreIssues = [:]; directoryRequest = nil
         selected = Set(UserDefaults.standard.stringArray(forKey:selectedKey) ?? [])
         message = NiaL10n.string("Carpeta conectada. Selecciona las sesiones que quieres compartir.")
         refreshCatalog()
@@ -167,7 +172,8 @@ private enum NiaSyncBridge {
         UserDefaults.standard.removeObject(forKey:"nia.sync.provider")
         UserDefaults.standard.removeObject(forKey:"nia.sync.google.folder")
         UserDefaults.standard.removeObject(forKey:"nia.sync.google.name")
-        connected = false; items = []; selected = []; message = NiaL10n.string("Este Mac está desconectado. Las copias compartidas se conservan.")
+        connected = false; items = []; selected = []; restoreIssues = [:]; directoryRequest = nil
+        message = NiaL10n.string("Este Mac está desconectado. Las copias compartidas se conservan.")
     }
     func synchronize() {
         guard connected, !busy, !isGoogleDrive || !NiaGoogleDriveAccount.shared.busy else { return }
@@ -196,36 +202,57 @@ private enum NiaSyncBridge {
         }
     }
     func resume(_ item: NiaSyncItem, directory: URL? = nil, opened: @escaping (String) -> Void) {
-        guard !busy else { return }
+        restore([item],directory:directory,all:false,opened:opened)
+    }
+    func resumeAll(opened: @escaping (String) -> Void) {
+        restore(items,directory:nil,all:true,opened:opened)
+    }
+    private func restore(_ requested: [NiaSyncItem], directory: URL?, all: Bool, opened: @escaping (String) -> Void) {
+        guard !busy, !requested.isEmpty else { return }
         let config: (URL,String,String?)
         do { config = try configuration() } catch { message = error.localizedDescription; return }
         let cache = Self.cache
+        if all { restoreIssues = [:] }
+        else { for item in requested { restoreIssues.removeValue(forKey:item.id) } }
         busy = true; directoryRequest = nil; message = NiaL10n.string("Preparando sesión en este Mac…")
         Task {
             defer { busy = false }
-            do {
-                let id = try await Task.detached(priority:.utility) {
-                    try NiaSyncEngine(folder:config.0,key:config.1,cache:cache).restore(item) { stage,revision in
-                        var request = ["operation":"import","stage":stage.path,"revision":revision]
-                        if let directory { request["directory"] = directory.path }
-                        let response = try JSONDecoder().decode([String:String].self,from:NiaSyncBridge.request(request))
-                        guard let id = response["id"] else { throw NiaSyncError.invalid }; return id
-                    }
-                }.value
-                select(id,true); refreshCatalog(); opened(id)
+            var restored = 0
+            for (index,item) in requested.enumerated() {
+                if all { message = String(format:NiaL10n.string("Restaurando sesiones: %d de %d…"),index + 1,requested.count) }
+                do {
+                    let id = try await Task.detached(priority:.utility) {
+                        try NiaSyncEngine(folder:config.0,key:config.1,cache:cache).restore(item) { stage,revision in
+                            var request = ["operation":"import","stage":stage.path,"revision":revision]
+                            if let directory { request["directory"] = directory.path }
+                            let response = try JSONDecoder().decode([String:String].self,from:NiaSyncBridge.request(request))
+                            guard let id = response["id"] else { throw NiaSyncError.invalid }; return id
+                        }
+                    }.value
+                    select(id,true); opened(id); restored += 1
+                } catch {
+                    let needsDirectory = error.localizedDescription.contains("SYNC_DIRECTORY_REQUIRED")
+                    let detail = NiaL10n.string(needsDirectory ? "El directorio original no existe aquí. Elige la carpeta del proyecto en este Mac." : error.localizedDescription)
+                    restoreIssues[item.id] = NiaSyncRestoreIssue(message:detail,needsDirectory:needsDirectory)
+                    if !all && needsDirectory { directoryRequest = item }
+                    if !all { message = detail }
+                }
+            }
+            refreshCatalog()
+            if all {
+                let pending = requested.count - restored
+                message = pending == 0
+                    ? String(format:NiaL10n.string("Sesiones restauradas: %d."),restored)
+                    : String(format:NiaL10n.string("Sesiones restauradas: %d. Pendientes: %d. Revisa las indicaciones de cada sesión."),restored,pending)
+            } else if restored > 0 {
                 message = NiaL10n.string("Sesión añadida a este Mac. Sus cambios también se compartirán.")
-            } catch {
-                if error.localizedDescription.contains("SYNC_DIRECTORY_REQUIRED") {
-                    directoryRequest = item
-                    message = NiaL10n.string("El directorio original no existe aquí. Elige la carpeta del proyecto en este Mac.")
-                } else { message = NiaL10n.string(error.localizedDescription) }
             }
         }
     }
-    func chooseDirectory(opened: @escaping (String) -> Void) {
-        guard let item = directoryRequest else { return }
+    func chooseDirectory(for requested: NiaSyncItem? = nil, opened: @escaping (String) -> Void) {
+        guard !busy, let item = requested ?? directoryRequest else { return }
         let panel = NSOpenPanel(); panel.canChooseDirectories = true; panel.canChooseFiles = false; panel.allowsMultipleSelection = false
-        panel.message = NiaL10n.string("Elige la carpeta del proyecto en este Mac.")
+        panel.message = String(format:NiaL10n.string("Elige la carpeta del proyecto para «%@» en este Mac."),item.summary.title)
         panel.begin { response in
             if response == .OK, let url = panel.url { self.resume(item,directory:url,opened:opened) }
         }
@@ -239,13 +266,25 @@ struct NiaSyncSettings: View {
     @State private var folder: URL?
     @State private var key = ""
     @State private var create = false
-    @State private var provider = "folder"
+    @AppStorage("nia.sync.setup.provider") private var preferredProvider = ""
+    private var provider: String {
+        get {
+            // The active transport is separate from a choice in the setup UI.
+            if sync.connected { return sync.isGoogleDrive ? "googleDrive" : "folder" }
+            if ["folder","googleDrive"].contains(preferredProvider) { return preferredProvider }
+            // Existing users may have authorized Google before this preference
+            // existed, without having connected a sync space yet.
+            return google.authorized ? "googleDrive" : "folder"
+        }
+        nonmutating set { preferredProvider = newValue }
+    }
     var body: some View {
         ScrollView {
             VStack(alignment:.leading,spacing:16) {
                 Label("Nia Sync · beta",systemImage:"icloud").font(.title2.bold())
                 Text("Continúa tus sesiones en otro Mac mediante una carpeta de iCloud Drive o Google Drive. nia_ cifra el contenido antes de guardarlo.")
                 if sync.connected {
+                    Label("Sincronización conectada",systemImage:"checkmark.circle.fill").foregroundStyle(.green)
                     Text(sync.locationLabel).font(.caption).textSelection(.enabled)
                     Toggle("Sincronizar automáticamente cada minuto",isOn:Binding(get:{sync.enabled},set:sync.setEnabled))
                     HStack {
@@ -270,7 +309,7 @@ struct NiaSyncSettings: View {
                         }.disabled(sync.busy)
                     }
                 } else {
-                    Picker("Servicio de sincronización",selection:$provider) {
+                    Picker("Servicio de sincronización",selection:Binding(get:{provider},set:{provider = $0})) {
                         Text("iCloud Drive / carpeta local").tag("folder")
                         Text("Google Drive directo").tag("googleDrive")
                     }.pickerStyle(.segmented).disabled(sync.busy)
@@ -300,7 +339,7 @@ struct NiaSyncSettings: View {
                 if sync.busy { ProgressView().controlSize(.small) }
                 Text(sync.message).font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
                 Divider()
-                Text(LocalizedStringKey(sync.isGoogleDrive || provider == "googleDrive" ? "nia_ debe estar abierta para sincronizar. La conexión directa sube y descarga las versiones cifradas mediante la API de Google Drive." : "nia_ debe estar abierta para sincronizar. En Google Drive, mantén esta carpeta disponible sin conexión. Espera a que el proveedor termine de sincronizar antes de cambiar de Mac.")).font(.caption)
+                Text(LocalizedStringKey(provider == "googleDrive" ? "nia_ debe estar abierta para sincronizar. La conexión directa sube y descarga las versiones cifradas mediante la API de Google Drive." : "nia_ debe estar abierta para sincronizar. En Google Drive, mantén esta carpeta disponible sin conexión. Espera a que el proveedor termine de sincronizar antes de cambiar de Mac.")).font(.caption)
                 Text("Se comparten el historial ANSI, los comandos, el nombre, el color, el directorio y la identidad SSH/tmux. Los procesos locales, los proyectos, las credenciales y las conversaciones internas de Claude/Codex no se transfieren.").font(.caption).foregroundStyle(.secondary)
                 Text("Si ambos Macs trabajan a la vez, se conservan sus versiones. Continuar crea una sesión local; no sustituye una sesión abierta. En esta beta, los borrados y la disposición de ventanas no se sincronizan.").font(.caption).foregroundStyle(.secondary)
             }.padding(8)
@@ -322,7 +361,13 @@ struct NiaSyncBrowser: View {
             }
             if !sync.connected { NiaSyncSettings() }
             else {
-                Text("Continúa una versión en este Mac. Las sesiones abiertas se conservan.").foregroundStyle(.secondary)
+                HStack {
+                    Text("Restaura todas las sesiones compartidas o continúa una por separado. Las sesiones abiertas se conservan.").foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Restaurar todas") { sync.resumeAll(opened:opened) }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(sync.busy || sync.items.isEmpty)
+                }
                 if sync.items.isEmpty { Text("Todavía no hay versiones disponibles. Selecciona sesiones en Preferencias → Sync y sincroniza ambos Macs.").padding(.vertical) }
                 List(sync.items) { item in
                     HStack {
@@ -331,14 +376,20 @@ struct NiaSyncBrowser: View {
                             Text(item.summary.cwd).font(.caption).lineLimit(1)
                             HStack { Text(item.revision.deviceName); Text(item.revision.created,style:.date); Text(item.revision.created,style:.time) }.font(.caption).foregroundStyle(.secondary)
                             if item.hasConflict { Label("Hay versiones paralelas; se conservan ambas.",systemImage:"arrow.triangle.branch").font(.caption).foregroundStyle(.orange) }
+                            if let issue = sync.restoreIssues[item.id] {
+                                Text(issue.message).font(.caption).foregroundStyle(.orange)
+                            }
                         }
                         Spacer()
-                        Button("Continuar aquí") { sync.resume(item) { id in opened(id); dismiss() } }.disabled(sync.busy)
+                        if sync.restoreIssues[item.id]?.needsDirectory == true {
+                            Button("Elegir carpeta del proyecto…") { sync.chooseDirectory(for:item,opened:opened) }.disabled(sync.busy)
+                        } else {
+                            Button("Continuar aquí") { sync.resume(item) { id in opened(id); dismiss() } }.disabled(sync.busy)
+                        }
                     }.padding(.vertical,5)
                 }
                 if sync.busy { ProgressView().controlSize(.small) }
                 Text(sync.message).font(.caption).textSelection(.enabled)
-                if sync.directoryRequest != nil { Button("Elegir carpeta del proyecto…") { sync.chooseDirectory { id in opened(id); dismiss() } } }
                 SettingsLink { Text("Configurar sincronización en Preferencias → Sync") }
             }
         }.padding(20).frame(width:740,height:570)

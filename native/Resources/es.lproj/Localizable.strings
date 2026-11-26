@@ -327,6 +327,12 @@
 "Todavía no hay versiones disponibles. Selecciona sesiones en Preferencias → Sync y sincroniza ambos Macs." = "Todavía no hay versiones disponibles. Selecciona sesiones en Preferencias → Sync y sincroniza ambos Macs.";
 "Hay versiones paralelas; se conservan ambas." = "Hay versiones paralelas; se conservan ambas.";
 "Continuar aquí" = "Continuar aquí";
+"Restaurar todas" = "Restaurar todas";
+"Restaura todas las sesiones compartidas o continúa una por separado. Las sesiones abiertas se conservan." = "Restaura todas las sesiones compartidas o continúa una por separado. Las sesiones abiertas se conservan.";
+"Restaurando sesiones: %d de %d…" = "Restaurando sesiones: %d de %d…";
+"Sesiones restauradas: %d." = "Sesiones restauradas: %d.";
+"Sesiones restauradas: %d. Pendientes: %d. Revisa las indicaciones de cada sesión." = "Sesiones restauradas: %d. Pendientes: %d. Revisa las indicaciones de cada sesión.";
+"Elige la carpeta del proyecto para «%@» en este Mac." = "Elige la carpeta del proyecto para «%@» en este Mac.";
 "Elegir carpeta del proyecto…" = "Elegir carpeta del proyecto…";
 "Configurar sincronización en Preferencias → Sync" = "Configurar sincronización en Preferencias → Sync";
 "Sync" = "Sync";
@@ -360,6 +366,9 @@
 "Se muestran las carpetas de sincronización creadas por nia_. Usa la misma cuenta de Google y la misma clave en el otro Mac." = "Se muestran las carpetas de sincronización creadas por nia_. Usa la misma cuenta de Google y la misma clave en el otro Mac.";
 "Sincronización con Google Drive completada." = "Sincronización con Google Drive completada.";
 "Servicio de sincronización" = "Servicio de sincronización";
+"Sincronización conectada" = "Sincronización conectada";
+"Cuenta de Google vinculada" = "Cuenta de Google vinculada";
+"Conecta un espacio de sincronización para compartir o recuperar tus sesiones." = "Conecta un espacio de sincronización para compartir o recuperar tus sesiones.";
 "iCloud Drive / carpeta local" = "iCloud Drive / carpeta local";
 "Google Drive directo" = "Google Drive directo";
 "nia_ debe estar abierta para sincronizar. La conexión directa sube y descarga las versiones cifradas mediante la API de Google Drive." = "nia_ debe estar abierta para sincronizar. La conexión directa sube y descarga las versiones cifradas mediante la API de Google Drive.";

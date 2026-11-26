@@ -57,6 +57,7 @@ func nia_string_free(_ value: UnsafeMutablePointer<CChar>) { free(value) }
     FFI.closed.remove(name)
     return 0
 }
+@MainActor func nia_reload_sessions(_ h: UnsafeMutableRawPointer?) -> Int32 { 0 }
 @MainActor func nia_dismiss_session(_ h: UnsafeMutableRawPointer?, _ id: UnsafePointer<CChar>) -> Int32 {
     guard !FFI.failDismiss else { return -1 }
     FFI.dismissed.insert(String(cString: id))
@@ -95,7 +96,13 @@ private extension NiaModel { func testRestore() { restoreWorkspace() } }
     @MainActor static func main() {
         let scenario = CommandLine.arguments[1]
         let model = NiaModel("original")
-        for id in ["left", "right", "removed"] { model.activate(id) }
+        if scenario == "synced" {
+            FFI.closed = ["left", "right"]
+            // Use the same per-session callback as Restore all, including reload.
+            for id in ["left", "right", "removed"] { model.activateSynced(id) }
+            model.activateSynced("left")
+            check(model.tabIDs == ["left", "right", "removed"], "repeating a restored session must not duplicate its tab")
+        } else { for id in ["left", "right", "removed"] { model.activate(id) } }
         model.selected = "left"
         model.secondary = "right"
         model.splitMode = "vertical"
@@ -167,6 +174,8 @@ class NativeWorkspaceTests(unittest.TestCase):
         core += between(shared, "    static func string(", "    static func register(")
         core += between(shared, "    static func claim(", "    static func prepareForUpdate(") + "}\n"
         methods = between(source, "    private func resultString(", "    func activateSynced(")
+        start = source.index("    func activateSynced(")
+        methods += source[start:source.index("\n    func ", start + 10)]
         methods += between(source, "    func refreshSessions()", "    func reconnectRemote(")
         methods += between(source, "    func requestFocus(", "    func archive(")
         # Extract through the next method without rewriting archive's body.
@@ -190,6 +199,7 @@ class NativeWorkspaceTests(unittest.TestCase):
     def test_new_scene_does_not_resurrect_removed_tab(self): self.run_case("new-scene")
     def test_stale_layout_does_not_resurrect_removed_tab(self): self.run_case("stale")
     def test_split_restart_and_explicit_reopen(self): self.run_case("split")
+    def test_restored_sessions_keep_both_split_panes_after_restart(self): self.run_case("synced")
     def test_stale_layout_does_not_reopen_exited_session(self): self.run_case("closed")
     def test_failed_close_keeps_tab_visible(self): self.run_case("failure")
     def test_closing_all_tabs_leaves_next_launch_empty(self): self.run_case("all-removed")

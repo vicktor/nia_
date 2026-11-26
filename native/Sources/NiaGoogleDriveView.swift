@@ -67,6 +67,10 @@ struct NiaGoogleDriveSetup: View {
     var body: some View {
         VStack(alignment:.leading,spacing:12) {
             Text("Conecta Google y comparte sesiones sin instalar Drive para escritorio. nia_ accede únicamente a los archivos que utiliza con tu autorización.")
+            if account.authorized {
+                Label("Cuenta de Google vinculada",systemImage:"checkmark.circle.fill").foregroundStyle(.green)
+                Text("Conecta un espacio de sincronización para compartir o recuperar tus sesiones.").font(.caption).foregroundStyle(.secondary)
+            }
             if !account.configured { Text("Esta compilación no incluye la configuración de Google Drive.").foregroundStyle(.secondary) }
             HStack {
                 Button(LocalizedStringKey(account.authorized ? "Reconectar Google" : "Conectar con Google"),action:account.connect)

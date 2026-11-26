@@ -21,7 +21,11 @@ La nueva compilación permite conectar Google **sin instalar Drive para escritor
 1. Abre **Preferencias → Sync → Google Drive directo → Conectar con Google**. Autoriza nia_ en el navegador y vuelve a la app.
 2. En el primer Mac, marca **Crear un espacio nuevo en Google Drive**, elige el nombre, copia y guarda la clave y pulsa **Crear espacio y conectar**. La carpeta se crea en tu Drive.
 3. Selecciona las sesiones y pulsa **Sincronizar ahora**. No se selecciona ninguna por defecto.
-4. En el otro Mac, utiliza una compilación con el mismo cliente OAuth, conecta la misma cuenta de Google, elige ese espacio y pega la clave; no crees otro espacio. Actualiza desde el botón de nube y pulsa **Continuar aquí**.
+4. En el otro Mac, utiliza una compilación con el mismo cliente OAuth, conecta la misma cuenta de Google, elige ese espacio y pega la clave; no crees otro espacio. Actualiza desde el botón de nube y pulsa **Restaurar todas** para abrir las sesiones de una vez, o **Continuar aquí** para una sola.
+
+**Restaurar todas** procesa las versiones que muestra el panel, incluidas las ramas paralelas, y conserva las pestañas abiertas. Muestra el progreso y un resumen al terminar. Repetir la importación de la misma versión reutiliza su sesión local. Si una sesión falla o necesita elegir la carpeta del proyecto, queda indicada en su fila y las demás continúan; puedes reintentarla allí. Los archivos se restauran fuera del hilo de la interfaz. La disposición de splits sigue siendo local.
+
+Preferencias recuerda el servicio elegido al cerrar la ventana o reiniciar nia_. Si ya habías vinculado Google y aún no habías elegido un servicio con esta versión, se abre Google Drive. **Cuenta de Google vinculada** confirma la autorización de la cuenta; después hay que conectar un espacio con su clave. **Sincronización conectada** identifica ese segundo paso completado y muestra su ubicación. Si ya existe un espacio conectado, la pantalla refleja su servicio activo.
 
 Solo se muestran espacios creados por nia_, no todas las carpetas de tu Drive. El permiso limitado `drive.file` evita pedir acceso general al disco. OAuth utiliza el navegador del sistema, PKCE S256, estado aleatorio y una respuesta local en `127.0.0.1`. Los tokens se guardan en el Keychain de este Mac (`ThisDeviceOnly`), separados de la clave de cifrado, y se renuevan cuando es necesario. **Desconectar Google** elimina los tokens locales y desconecta Sync; no borra los archivos de Drive ni revoca por sí mismo el consentimiento en la cuenta de Google.
 
@@ -63,6 +67,9 @@ swiftc native/Sources/NiaSyncEngine.swift native/Tests/NiaSyncTests.swift -o /tm
 /tmp/nia-sync-tests
 swiftc native/Sources/NiaSyncEngine.swift native/Sources/NiaGoogleOAuth.swift native/Sources/NiaGoogleDrive.swift native/Tests/NiaGoogleDriveTests.swift -o /tmp/nia-google-drive-tests
 /tmp/nia-google-drive-tests
+python3 -m unittest discover -s tests -p test_native_sync_settings.py -v
+python3 -m unittest discover -s tests -p test_native_sync_restore.py -v
+python3 -m unittest discover -s tests -p test_native_workspace.py -v
 ./scripts/build-native-macos.sh /tmp/nia-sync-beta.app
 ```
 
@@ -72,7 +79,11 @@ Prueba manual pendiente: crea dos sesiones de ejemplo en un split, sincronízala
 
 ## English
 
-**Direct Google Drive:** open **Settings → Sync → Direct Google Drive → Connect with Google**, authorize in your system browser, then create a Nia Sync space on your first Mac. Save the recovery key, select sessions and sync. On your other Mac, use a build with the same OAuth client, sign in to the same Google account, choose the existing space and paste the same key. Use **Continue here** from the cloud button. Drive for desktop is not required. Only nia_-created spaces are listed, using the limited `drive.file` scope.
+**Direct Google Drive:** open **Settings → Sync → Direct Google Drive → Connect with Google**, authorize in your system browser, then create a Nia Sync space on your first Mac. Save the recovery key, select sessions and sync. On your other Mac, use a build with the same OAuth client, sign in to the same Google account, choose the existing space and paste the same key. From the cloud panel, use **Restore all** to open every shared session at once, or **Continue here** for a single session. Drive for desktop is not required. Only nia_-created spaces are listed, using the limited `drive.file` scope.
+
+**Restore all** processes the versions shown in the panel, including parallel branches, and preserves open tabs. It reports progress and completion counts. Reimporting the same version reuses its local session. An individual failure or missing project folder is shown on that row for retry while the remaining sessions continue. File restoration runs off the UI thread. Split layout remains local.
+
+Settings remembers the selected service across window closure and app restarts. Previously linked Google accounts default to Google Drive unless you have explicitly selected a service in this version. **Google account linked** confirms account authorization; you still need to connect a sync space with its key. **Sync connected** identifies that completed step and shows its location. When a space is already connected, settings reflects its active service.
 
 OAuth uses PKCE S256, random state and a loopback callback; personal tokens stay in local Keychain (`ThisDeviceOnly`). Disconnecting Google removes local tokens and the Sync connection, retaining cloud copies; it does not revoke Google account consent. Encrypted files are authenticated before use. Persistent preallocated IDs make upload retries idempotent, and blocks upload before checkpoints. Direct sync completion confirms the API cycle; the receiving Mac still needs to refresh. The direct transport also limits each space to 20,000 files and 4 GiB of recognized encrypted data.
 
