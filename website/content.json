@@ -411,13 +411,13 @@
       "status": "experimental",
       "es": [
         "Retomar conversaciones de agentes",
-        "Recuerda órdenes explícitas de resume de Claude, Codex y Gemini.",
-        "Necesita el ID en el comando original, la CLI y los datos de conversación en el Mac. Descubrir automáticamente el ID de una conversación iniciada sin resume sigue pendiente."
+        "Retoma conversaciones de Claude, Codex y Antigravity con su ID.",
+        "Antigravity se restaura con agy --conversation=ID; se mantiene la compatibilidad con Gemini CLI. Necesita el ID en el comando original, la CLI y los datos de conversación en el Mac. Descubrir automáticamente el ID de una conversación iniciada sin resume sigue pendiente."
       ],
       "en": [
         "Resume agent conversations",
-        "Remember explicit resume commands for Claude, Codex and Gemini.",
-        "Requires an ID in the original command, the CLI and conversation data on the Mac. Automatic discovery of IDs from conversations started without resume is still pending."
+        "Resume Claude, Codex and Antigravity conversations by ID.",
+        "Antigravity resumes with agy --conversation=ID; Gemini CLI commands remain supported. Requires an ID in the original command, the CLI and conversation data on the Mac. Automatic discovery of IDs from conversations started without resume is still pending."
       ]
     },
     {

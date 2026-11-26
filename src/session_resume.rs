@@ -12,6 +12,11 @@ pub(crate) fn validated_resume(source: &str) -> Option<String> {
     let agent = match parts.as_slice() {
         ["claude", "--resume", id] => Some(("claude --resume", *id)),
         ["codex", "resume", id] => Some(("codex resume", *id)),
+        ["agy", "--conversation" | "--resume" | "-r", id] => Some(("agy --conversation", *id)),
+        ["agy", option] => option
+            .strip_prefix("--conversation=")
+            .or_else(|| option.strip_prefix("--resume="))
+            .map(|id| ("agy --conversation", id)),
         ["gemini", "--resume" | "-r", id] => Some(("gemini --resume", *id)),
         ["gemini", option] => option
             .strip_prefix("--resume=")
@@ -25,7 +30,11 @@ pub(crate) fn validated_resume(source: &str) -> Option<String> {
                 .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
             && (provider != "gemini --resume" || !id.bytes().all(|b| b.is_ascii_digit()))
         {
-            return Some(format!("{provider} {id}"));
+            return Some(if provider == "agy --conversation" {
+                format!("{provider}={id}")
+            } else {
+                format!("{provider} {id}")
+            });
         }
         return None;
     }
@@ -204,6 +213,46 @@ mod tests {
             "gemini -r 12345678; echo bad",
         ] {
             assert!(validated_resume(source).is_none(), "{source}");
+        }
+    }
+
+    #[test]
+    fn antigravity_resumes_explicit_conversation_ids() {
+        let id = "123e4567-e89b-12d3-a456-426614174000";
+        for source in [
+            format!("agy --conversation={id}"),
+            format!("agy --conversation {id}"),
+            format!("agy --conversation='{id}'"),
+            format!("  agy --conversation=\"{id}\"  "),
+            format!("agy --resume {id}"),
+            format!("agy --resume={id}"),
+            format!("agy -r {id}"),
+        ] {
+            assert_eq!(
+                validated_resume(&source),
+                Some(format!("agy --conversation={id}")),
+                "{source}"
+            );
+        }
+        for source in [
+            "agy".to_owned(),
+            "agy --conversation".to_owned(),
+            "agy --conversation=".to_owned(),
+            "agy --continue".to_owned(),
+            "agy -c".to_owned(),
+            "agy --conversation=short".to_owned(),
+            format!("agy --conversation={}", "a".repeat(129)),
+            "agy --conversation='id with spaces'".to_owned(),
+            "agy --conversation=$CONVERSATION_ID".to_owned(),
+            "agy --conversation=$(echo 12345678)".to_owned(),
+            "agy --conversation=`echo 12345678`".to_owned(),
+            format!("agy --conversation={id}; echo bad"),
+            format!("agy --conversation={id} --print prompt"),
+            format!("agy --conversation={id} --dangerously-skip-permissions"),
+            format!("agy --conversation={id} --conversation=abcdefgh"),
+            format!("agy --conversation={id}\nwhoami"),
+        ] {
+            assert!(validated_resume(&source).is_none(), "{source}");
         }
     }
 

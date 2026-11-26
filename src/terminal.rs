@@ -1231,6 +1231,43 @@ mod history_tests {
     }
 
     #[test]
+    fn two_interrupted_antigravity_sessions_restore_independently() {
+        let temp = tempfile::tempdir().unwrap();
+        let left = temp.path().join("left");
+        let right = temp.path().join("right");
+        let mut first = resume_test_terminal(&left);
+        let mut second = resume_test_terminal(&right);
+        for (base, source) in [
+            (&left, "agy --conversation=123e4567-e89b-12d3-a456-426614174000"),
+            (&right, "agy -r 123e4567-e89b-12d3-a456-426614174001"),
+        ] {
+            let user = base.join("user");
+            fs::create_dir_all(&user).unwrap();
+            write_zsh_startup(base, Some(&user)).unwrap();
+            let Some(mut shell) = isolated_zsh(base, &user) else {
+                return;
+            };
+            shell.env("NIA_TEST_RESUME_COMMAND", source);
+            assert_zsh_success(shell, "_nia_mark_start \"$NIA_TEST_RESUME_COMMAND\"");
+        }
+        assert!(first.take_command_marks().unwrap().is_empty());
+        assert!(second.take_command_marks().unwrap().is_empty());
+        drop(first);
+        drop(second);
+        // Each split must recover its own conversation after recreating the PTYs.
+        let mut first = resume_test_terminal(&left);
+        let mut second = resume_test_terminal(&right);
+        assert_replayed_to_pty(
+            &mut first,
+            "agy --conversation=123e4567-e89b-12d3-a456-426614174000\r\n",
+        );
+        assert_replayed_to_pty(
+            &mut second,
+            "agy --conversation=123e4567-e89b-12d3-a456-426614174001\r\n",
+        );
+    }
+
+    #[test]
     fn completed_ssh_and_other_commands_clear_resume() {
         let temp = tempfile::tempdir().unwrap();
         let mut terminal = resume_test_terminal(temp.path());
@@ -1240,6 +1277,7 @@ mod history_tests {
             ("claude --resume 12345678", "claude --resume 12345678"),
             ("codex resume 12345678", "codex resume 12345678"),
             ("gemini -r abc12345", "gemini --resume abc12345"),
+            ("agy --resume abc12345", "agy --conversation=abc12345"),
         ] {
             append_test_marks(
                 temp.path(),
@@ -1278,6 +1316,9 @@ mod history_tests {
         for source in [
             "ssh host; echo unexpected",
             "gemini --resume 1",
+            "agy --conversation=12345678; echo unexpected",
+            "agy --continue",
+            "agy --conversation=$CONVERSATION_ID",
             "ssh host reboot",
         ] {
             fs::write(temp.path().join("agent-resume"), source).unwrap();
