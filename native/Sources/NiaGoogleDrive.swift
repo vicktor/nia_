@@ -202,11 +202,12 @@ final class NiaGoogleDriveTransport {
         var byName: [String:NiaDriveFile] = [:]
         var bytes: UInt64 = 0
         for file in files.sorted(by:{$0.id < $1.id}) where Self.localPath(file.name) != nil {
-            // The header is JSON. Drive can classify an existing header as
-            // application/json even when an older client sent a binary type.
-            // Content is still bounded, checksummed and authenticated on pull.
-            let supportedType = file.mimeType == "application/octet-stream"
-                || (file.name == "space.json" && file.mimeType == "application/json")
+            // Drive can sniff random ciphertext as audio, images, etc., even
+            // when uploaded as application/octet-stream. MIME is advisory for
+            // stored files; names, bounds, checksums and AES-GCM authenticate
+            // their contents on pull. Google-native objects (including folders
+            // and shortcuts) are not downloadable sync files.
+            let supportedType = !file.mimeType.lowercased().hasPrefix("application/vnd.google-apps.")
             guard supportedType, file.parents?.contains(folderID) == true,
                   let size = file.size.flatMap(UInt64.init), size <= Self.limit(file.name) else { throw NiaDriveError.conflict }
             bytes += size; guard bytes <= 4 * 1024 * 1024 * 1024 else { throw NiaSyncError.limit }

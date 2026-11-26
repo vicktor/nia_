@@ -40,6 +40,7 @@ private final class FakeDrive {
     var pending: [String:[String:Any]] = [:]
     var sequence = 0, uploads = 0, downloads = 0
     var loseNextUpload = false, corruptDownload: String?, hostileLocation = false
+    var revisionMIME: String?
     var uploadOrder: [String] = []
     func reply(_ object: Any, code: Int = 200) throws -> (Int,[String:String],Data) {
         (code,[:],try JSONSerialization.data(withJSONObject:object))
@@ -63,6 +64,9 @@ private final class FakeDrive {
             // Real Drive reports the JSON space header as application/json,
             // even when a previous client requested application/octet-stream.
             if metadata["name"] as? String == "space.json" { metadata["mimeType"] = "application/json" }
+            if (metadata["name"] as? String)?.hasPrefix("revision-") == true, let revisionMIME {
+                metadata["mimeType"] = revisionMIME
+            }
             records[id] = metadata; payloads[id] = data; uploads += 1
             uploadOrder.append(metadata["name"] as! String)
             if loseNextUpload { loseNextUpload = false; throw URLError(.networkConnectionLost) }
@@ -181,6 +185,9 @@ private final class FakeDrive {
         let log = Data("\u{1b}[31mPRIVATE-FIXTURE\u{1b}[0m\r\n".utf8); try log.write(to:transcript)
         let snapshot = NiaSyncSnapshot(metadata:Data(#"{"title":"PRIVATE-FIXTURE","cwd":"/tmp/fixture","remote_host":null}"#.utf8),transcript:NiaSyncFile(path:transcript.path,length:UInt64(log.count)),history:nil)
         let first = try engineA.synchronize(selected:["local-a"],deviceName:"Fixture Mac A") { _ in snapshot }
+        // A real encrypted revision was classified as audio by Drive. Upload
+        // succeeds, then the next inventory used to block both Macs entirely.
+        fake.revisionMIME = "audio/mpeg"
         fake.loseNextUpload = true
         await rejected("lost upload reply reported") { try await a.locked { try await a.push(key:key,cache:cacheA) } }
         try await a.locked { try await a.push(key:key,cache:cacheA) }
@@ -188,6 +195,9 @@ private final class FakeDrive {
         check(Set(fake.records.values.compactMap { $0["name"] as? String }).count == fake.records.count,"retry after lost block reply never duplicates a file")
         check(fake.uploadOrder.last!.hasPrefix("revision-"),"checkpoint uploaded after blocks")
         check(fake.payloads.values.allSatisfy { $0.range(of:Data("PRIVATE-FIXTURE".utf8)) == nil },"no plaintext reaches Drive")
+        do { try await a.pull(key:key,cache:cacheA) }
+        catch { fatalError("Sync after Drive classifies ciphertext as audio must succeed: \(error.localizedDescription)") }
+        check(true,"uploading Mac can sync again after Drive classifies a revision as audio")
         let wrong = try NiaGoogleDriveTransport(api:api,folderID:folder.id,mirror:root.appendingPathComponent("wrong"))
         await rejected("wrong key rejected before writing mirror") { try await wrong.pull(key:NiaSyncEngine.newKey(),cache:cacheB) }
         check(!FileManager.default.fileExists(atPath:wrong.mirror.appendingPathComponent("space.json").path),"wrong key leaves no header")
@@ -218,9 +228,23 @@ private final class FakeDrive {
         let branches = try engineB.synchronize(selected:[],deviceName:"Fixture Mac B") { _ in fatalError() }
         check(branches.count == 2 && branches.allSatisfy(\.hasConflict),"Drive preserves simultaneous branches")
         let blobID = fake.records.first { ($0.value["name"] as? String)?.hasPrefix("blob-") == true }!.key
-        fake.records[blobID]!["mimeType"] = "application/json"
-        await rejected("JSON MIME allowance applies only to the space header") { try await b.pull(key:key,cache:cacheB) }
-        fake.records[blobID]!["mimeType"] = "application/octet-stream"
+        let uploadsBeforeClassification = fake.uploads
+        for (index,mimeType) in ["audio/mpeg","image/png","application/pdf","text/plain","application/json"].enumerated() {
+            fake.records[blobID]!["mimeType"] = mimeType
+            let fresh = try NiaGoogleDriveTransport(api:api,folderID:folder.id,mirror:root.appendingPathComponent("classified-\(index)"))
+            let cache = root.appendingPathComponent("cache-classified-\(index)")
+            try await fresh.pull(key:key,cache:cache)
+            let engine = try NiaSyncEngine(folder:fresh.mirror,key:key,cache:cache)
+            let catalog = try engine.synchronize(selected:[],deviceName:"New Mac") { _ in fatalError() }
+            check(catalog.count == 2,"a fresh Mac receives both branches despite inferred \(mimeType) metadata")
+            try await fresh.push(key:key,cache:cache)
+        }
+        check(fake.uploads == uploadsBeforeClassification,"reading inferred MIME types does not rewrite cloud files")
+        for mimeType in [NiaDriveFile.folderMIME,"application/vnd.google-apps.shortcut","application/vnd.google-apps.document"] {
+            fake.records[blobID]!["mimeType"] = mimeType
+            await rejected("Google-native objects are rejected even with binary size and checksum") { try await b.pull(key:key,cache:cacheB) }
+        }
+        fake.records[blobID]!["mimeType"] = "audio/mpeg"
         fake.corruptDownload = blobID
         let tampered = try NiaGoogleDriveTransport(api:api,folderID:folder.id,mirror:root.appendingPathComponent("tampered"))
         await rejected("corrupt download fails") { try await tampered.pull(key:key,cache:root.appendingPathComponent("cache-tampered")) }
